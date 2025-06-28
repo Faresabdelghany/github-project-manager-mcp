@@ -8,7 +8,7 @@ class GitHubProjectManagerServer {
   private server: Server;
 
   constructor() {
-    this.server = new Server({ name: "github-project-manager", version: "1.0.0" }, { capabilities: { tools: {} } });
+    this.server = new Server({ name: "github-project-manager", version: "1.0.0" });
     this.setupHandlers();
   }
 
