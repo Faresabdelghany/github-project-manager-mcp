@@ -697,7 +697,7 @@ class GitHubProjectManagerServer {
     await this.server.connect(transport);
     console.error("GitHub Project Manager MCP server running on stdio");
     console.error(`Repository: ${this.owner}/${this.repo}`);
-    console.error("Tools available: 13 comprehensive project management tools");
+    console.error("Tools available: 14 comprehensive project management tools");
   }
 }
 
