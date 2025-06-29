@@ -38,12 +38,7 @@ class GitHubProjectManagerServer {
     }
 
     this.octokit = new Octokit({ auth: token });
-    this.graphqlWithAuth = graphql.defaults({
-      headers: {
-        authorization: `token ${token}`,
-      },
-    });
-    this.owner = process.env.GITHUB_OWNER || '';
+    this.owner = process.env.GITHUB_OWNER || ''; || '';
     this.repo = process.env.GITHUB_REPO || '';
 
     this.setupToolHandlers();
