@@ -1,6 +1,6 @@
 {
   "name": "github-project-manager",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Generated MCP server: github-project-manager",
   "main": "build/index.js",
   "type": "module",
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.4.0",
+    "@octokit/graphql": "^9.0.1",
     "@octokit/rest": "latest",
     "@types/node": "latest",
     "typescript": "latest",
