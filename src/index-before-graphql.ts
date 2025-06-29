@@ -14,7 +14,6 @@ import { graphql } from '@octokit/graphql';
 class GitHubProjectManagerServer {
   private server: Server;
   private octokit: Octokit;
-  private graphqlWithAuth: any;
   private owner: string;
   private repo: string;
 
@@ -38,11 +37,6 @@ class GitHubProjectManagerServer {
     }
 
     this.octokit = new Octokit({ auth: token });
-    this.graphqlWithAuth = graphql.defaults({
-      headers: {
-        authorization: `token ${token}`,
-      },
-    });
     this.owner = process.env.GITHUB_OWNER || '';
     this.repo = process.env.GITHUB_REPO || '';
 
