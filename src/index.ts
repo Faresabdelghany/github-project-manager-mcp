@@ -37,7 +37,7 @@ class GitHubProjectManagerServer {
       throw new Error('GITHUB_TOKEN environment variable is required');
     }
 
-    this.octokit = new Octokit({ auth: token });({ auth: token });
+    this.octokit = new Octokit({ auth: token });
     this.owner = process.env.GITHUB_OWNER || '';
     this.repo = process.env.GITHUB_REPO || '';
 
