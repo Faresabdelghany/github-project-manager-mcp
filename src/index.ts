@@ -22,7 +22,7 @@ class GitHubProjectManagerServer {
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '2.0.0',
+        version: '2.1.0',
       }
     );
 
@@ -61,6 +61,59 @@ class GitHubProjectManagerServer {
     } catch (error) {
       console.error('Date formatting error:', error);
       return undefined;
+    }
+  }
+
+  private createSprintDescription(metadata: any): string {
+    const sprintData = {
+      type: 'sprint',
+      sprintNumber: metadata.sprintNumber,
+      goals: metadata.goals || [],
+      duration: metadata.duration || 14,
+      startDate: metadata.startDate,
+      endDate: metadata.endDate,
+      description: metadata.description || '',
+      createdAt: new Date().toISOString()
+    };
+
+    return `<!-- SPRINT_METADATA:${JSON.stringify(sprintData)} -->\n\n${metadata.description || ''}`;
+  }
+
+  private parseSprintDescription(description: string): any {
+    if (!description) return null;
+    
+    const match = description.match(/<!-- SPRINT_METADATA:(.*?) -->/);
+    if (!match) return null;
+
+    try {
+      return JSON.parse(match[1]);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  private async getNextSprintNumber(): Promise<number> {
+    try {
+      const response = await this.octokit.rest.issues.listMilestones({
+        owner: this.owner,
+        repo: this.repo,
+        state: 'all',
+        per_page: 100
+      });
+
+      let maxSprintNumber = 0;
+      
+      response.data.forEach(milestone => {
+        const sprintData = this.parseSprintDescription(milestone.description || '');
+        if (sprintData && sprintData.type === 'sprint' && sprintData.sprintNumber) {
+          maxSprintNumber = Math.max(maxSprintNumber, sprintData.sprintNumber);
+        }
+      });
+
+      return maxSprintNumber + 1;
+    } catch (error) {
+      console.error('Error getting next sprint number:', error);
+      return 1;
     }
   }
 
@@ -106,6 +159,23 @@ class GitHubProjectManagerServer {
                 pr_number: { type: 'number', description: 'Pull request number (alternative to content_id)' }
               },
               required: ['project_id']
+            }
+          },
+          // SPRINT MANAGEMENT
+          {
+            name: 'create_sprint',
+            description: 'Create a new development sprint',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', description: 'Sprint title' },
+                description: { type: 'string', description: 'Sprint description' },
+                start_date: { type: 'string', description: 'Sprint start date (YYYY-MM-DD)' },
+                end_date: { type: 'string', description: 'Sprint end date (YYYY-MM-DD)' },
+                duration: { type: 'number', description: 'Sprint duration in days (default: 14)', minimum: 7, maximum: 28 },
+                goals: { type: 'array', items: { type: 'string' }, description: 'Sprint goals and objectives' }
+              },
+              required: ['title']
             }
           },
           // MILESTONE MANAGEMENT
@@ -263,6 +333,10 @@ class GitHubProjectManagerServer {
           case 'add_item_to_project':
             return await this.handleAddItemToProject(args);
 
+          // SPRINT MANAGEMENT
+          case 'create_sprint':
+            return await this.handleCreateSprint(args);
+
           // MILESTONE MANAGEMENT
           case 'create_milestone':
             return await this.handleCreateMilestone(args);
@@ -301,6 +375,89 @@ class GitHubProjectManagerServer {
         throw new McpError(ErrorCode.InternalError, `Tool execution failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     });
+  }
+
+  // SPRINT MANAGEMENT IMPLEMENTATIONS
+  private async handleCreateSprint(args: any) {
+    this.validateRepoConfig();
+
+    try {
+      // Calculate dates if not provided
+      let startDate = args.start_date;
+      let endDate = args.end_date;
+      const duration = args.duration || 14;
+
+      if (!startDate) {
+        startDate = new Date().toISOString().split('T')[0]; // Today
+      }
+
+      if (!endDate && startDate) {
+        const start = new Date(startDate);
+        const end = new Date(start.getTime() + (duration * 24 * 60 * 60 * 1000));
+        endDate = end.toISOString().split('T')[0];
+      }
+
+      // Get next sprint number
+      const sprintNumber = await this.getNextSprintNumber();
+      
+      // Create sprint title with number if not provided
+      const sprintTitle = args.title.includes('Sprint') ? args.title : `Sprint ${sprintNumber}: ${args.title}`;
+
+      // Create sprint metadata
+      const sprintMetadata = {
+        sprintNumber,
+        goals: args.goals || [],
+        duration,
+        startDate,
+        endDate,
+        description: args.description || ''
+      };
+
+      // Create milestone with sprint metadata
+      const sprintDescription = this.createSprintDescription(sprintMetadata);
+      
+      const response = await this.octokit.rest.issues.createMilestone({
+        owner: this.owner,
+        repo: this.repo,
+        title: sprintTitle,
+        description: sprintDescription,
+        due_on: this.formatDateForGitHub(endDate),
+        state: 'open'
+      });
+
+      const milestone = response.data;
+      
+      let result = `🏃‍♂️ **Sprint created successfully!**\n\n`;
+      result += `**Sprint:** ${milestone.title}\n`;
+      result += `**Number:** Sprint ${sprintNumber}\n`;
+      result += `**Duration:** ${duration} days\n`;
+      result += `**Start Date:** ${startDate}\n`;
+      result += `**End Date:** ${endDate}\n`;
+      result += `**State:** ${milestone.state}\n`;
+      
+      if (args.goals && args.goals.length > 0) {
+        result += `**Goals:**\n`;
+        args.goals.forEach((goal: string, index: number) => {
+          result += `   ${index + 1}. ${goal}\n`;
+        });
+      }
+      
+      result += `**Milestone Number:** ${milestone.number}\n`;
+      result += `**URL:** ${milestone.html_url}\n\n`;
+      result += `💡 **Next Steps:**\n`;
+      result += `• Use 'add_issues_to_sprint' to add issues to this sprint\n`;
+      result += `• Use 'get_current_sprint' to view active sprint details\n`;
+      result += `• Use 'get_sprint_metrics' to track progress`;
+
+      return {
+        content: [{
+          type: "text",
+          text: result
+        }]
+      };
+    } catch (error: any) {
+      throw new Error(`Failed to create sprint: ${error.message}`);
+    }
   }
 
   // PROJECT MANAGEMENT IMPLEMENTATIONS
@@ -1001,7 +1158,7 @@ class GitHubProjectManagerServer {
     await this.server.connect(transport);
     console.error("GitHub Project Manager MCP server running on stdio");
     console.error(`Repository: ${this.owner}/${this.repo}`);
-    console.error("Tools available: 15 comprehensive project management tools");
+    console.error("Tools available: 16 comprehensive project management tools (including create_sprint)");
   }
 }
 
