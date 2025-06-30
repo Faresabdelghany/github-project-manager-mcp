@@ -1,6 +1,6 @@
 {
   "name": "github-project-manager",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Comprehensive GitHub project management MCP server with sprint management capabilities",
   "main": "build/index.js",
   "type": "module",
