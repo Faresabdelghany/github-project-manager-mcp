@@ -22,7 +22,7 @@ class GitHubProjectManagerServer {
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '2.1.0',
+        version: '2.2.0',
       }
     );
 
@@ -90,6 +90,26 @@ class GitHubProjectManagerServer {
     } catch (error) {
       return null;
     }
+  }
+
+  private getSprintStatus(sprintData: any, milestone: any): string {
+    const today = new Date();
+    const startDate = new Date(sprintData.startDate);
+    const endDate = new Date(sprintData.endDate || milestone.due_on);
+
+    if (milestone.state === 'closed') {
+      return 'completed';
+    }
+
+    if (today < startDate) {
+      return 'planned';
+    } else if (today >= startDate && today <= endDate) {
+      return 'active';
+    } else if (today > endDate) {
+      return 'overdue';
+    }
+
+    return 'unknown';
   }
 
   private async getNextSprintNumber(): Promise<number> {
@@ -176,6 +196,19 @@ class GitHubProjectManagerServer {
                 goals: { type: 'array', items: { type: 'string' }, description: 'Sprint goals and objectives' }
               },
               required: ['title']
+            }
+          },
+          {
+            name: 'list_sprints',
+            description: 'List development sprints with filtering and sorting options',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', enum: ['active', 'completed', 'planned', 'overdue', 'all'], description: 'Sprint status filter' },
+                sort_by: { type: 'string', enum: ['created', 'start_date', 'end_date', 'sprint_number'], description: 'Sort criteria (default: sprint_number)' },
+                order: { type: 'string', enum: ['asc', 'desc'], description: 'Sort order (default: desc)' }
+              },
+              required: []
             }
           },
           // MILESTONE MANAGEMENT
@@ -336,6 +369,8 @@ class GitHubProjectManagerServer {
           // SPRINT MANAGEMENT
           case 'create_sprint':
             return await this.handleCreateSprint(args);
+          case 'list_sprints':
+            return await this.handleListSprints(args);
 
           // MILESTONE MANAGEMENT
           case 'create_milestone':
@@ -457,6 +492,165 @@ class GitHubProjectManagerServer {
       };
     } catch (error: any) {
       throw new Error(`Failed to create sprint: ${error.message}`);
+    }
+  }
+
+  private async handleListSprints(args: any) {
+    this.validateRepoConfig();
+
+    try {
+      // Get all milestones to search for sprints
+      const response = await this.octokit.rest.issues.listMilestones({
+        owner: this.owner,
+        repo: this.repo,
+        state: 'all',
+        per_page: 100
+      });
+
+      // Filter for sprints and parse metadata
+      const sprints = response.data
+        .map(milestone => {
+          const sprintData = this.parseSprintDescription(milestone.description || '');
+          if (!sprintData || sprintData.type !== 'sprint') {
+            return null;
+          }
+
+          const status = this.getSprintStatus(sprintData, milestone);
+          const progress = milestone.closed_issues + milestone.open_issues > 0 
+            ? Math.round((milestone.closed_issues / (milestone.closed_issues + milestone.open_issues)) * 100)
+            : 0;
+
+          return {
+            ...sprintData,
+            milestone,
+            status,
+            progress,
+            totalIssues: milestone.closed_issues + milestone.open_issues,
+            closedIssues: milestone.closed_issues,
+            openIssues: milestone.open_issues
+          };
+        })
+        .filter(sprint => sprint !== null);
+
+      // Filter by status if specified
+      let filteredSprints = sprints;
+      if (args.status && args.status !== 'all') {
+        filteredSprints = sprints.filter(sprint => sprint.status === args.status);
+      }
+
+      // Sort sprints
+      const sortBy = args.sort_by || 'sprint_number';
+      const order = args.order || 'desc';
+      
+      filteredSprints.sort((a, b) => {
+        let aValue, bValue;
+        
+        switch (sortBy) {
+          case 'created':
+            aValue = new Date(a.createdAt || a.milestone.created_at);
+            bValue = new Date(b.createdAt || b.milestone.created_at);
+            break;
+          case 'start_date':
+            aValue = new Date(a.startDate);
+            bValue = new Date(b.startDate);
+            break;
+          case 'end_date':
+            aValue = new Date(a.endDate || a.milestone.due_on);
+            bValue = new Date(b.endDate || b.milestone.due_on);
+            break;
+          case 'sprint_number':
+          default:
+            aValue = a.sprintNumber;
+            bValue = b.sprintNumber;
+            break;
+        }
+
+        if (order === 'asc') {
+          return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+        } else {
+          return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+        }
+      });
+
+      // Generate output
+      let result = `🏃‍♂️ **Development Sprints** - Found ${filteredSprints.length} sprints`;
+      if (args.status && args.status !== 'all') {
+        result += ` (${args.status})`;
+      }
+      result += `\n\n`;
+
+      if (filteredSprints.length === 0) {
+        result += args.status && args.status !== 'all' 
+          ? `No ${args.status} sprints found.`
+          : "No sprints found. Use 'create_sprint' to create your first sprint.";
+      } else {
+        filteredSprints.forEach(sprint => {
+          const statusIcon = {
+            'active': '🟢',
+            'completed': '✅',
+            'planned': '📅',
+            'overdue': '🔴'
+          }[sprint.status] || '❓';
+
+          const today = new Date();
+          const startDate = new Date(sprint.startDate);
+          const endDate = new Date(sprint.endDate || sprint.milestone.due_on);
+          
+          let timeInfo = '';
+          if (sprint.status === 'active') {
+            const daysRemaining = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            timeInfo = `${daysRemaining} days remaining`;
+          } else if (sprint.status === 'planned') {
+            const daysUntilStart = Math.ceil((startDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            timeInfo = `starts in ${daysUntilStart} days`;
+          } else if (sprint.status === 'overdue') {
+            const daysOverdue = Math.ceil((today.getTime() - endDate.getTime()) / (1000 * 60 * 60 * 24));
+            timeInfo = `${daysOverdue} days overdue`;
+          } else if (sprint.status === 'completed') {
+            timeInfo = `completed ${new Date(sprint.milestone.closed_at || endDate).toLocaleDateString()}`;
+          }
+
+          result += `${statusIcon} **${sprint.milestone.title}** (#${sprint.milestone.number})\n`;
+          result += `   📊 Progress: ${sprint.progress}% (${sprint.closedIssues}/${sprint.totalIssues} issues)\n`;
+          result += `   📅 ${startDate.toLocaleDateString()} → ${endDate.toLocaleDateString()}\n`;
+          
+          if (timeInfo) {
+            result += `   ⏰ ${timeInfo}\n`;
+          }
+          
+          result += `   ⏱️  Duration: ${sprint.duration} days\n`;
+          
+          if (sprint.goals && sprint.goals.length > 0) {
+            result += `   🎯 Goals: ${sprint.goals.length} defined\n`;
+          }
+          
+          result += `   🔗 ${sprint.milestone.html_url}\n\n`;
+        });
+
+        // Add summary statistics
+        const statusCounts = {
+          active: filteredSprints.filter(s => s.status === 'active').length,
+          completed: filteredSprints.filter(s => s.status === 'completed').length,
+          planned: filteredSprints.filter(s => s.status === 'planned').length,
+          overdue: filteredSprints.filter(s => s.status === 'overdue').length
+        };
+
+        result += `📈 **Sprint Summary:**\n`;
+        result += `• Active: ${statusCounts.active} | Completed: ${statusCounts.completed} | Planned: ${statusCounts.planned} | Overdue: ${statusCounts.overdue}\n\n`;
+        result += `💡 **Available Actions:**\n`;
+        result += `• Use 'get_current_sprint' to view active sprint details\n`;
+        result += `• Use 'create_sprint' to create a new sprint\n`;
+        result += `• Use 'add_issues_to_sprint' to assign issues to sprints`;
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: result
+        }]
+      };
+    } catch (error: any) {
+      throw new Error(`Failed to list sprints: ${error.message}`);
     }
   }
 
@@ -1158,7 +1352,7 @@ class GitHubProjectManagerServer {
     await this.server.connect(transport);
     console.error("GitHub Project Manager MCP server running on stdio");
     console.error(`Repository: ${this.owner}/${this.repo}`);
-    console.error("Tools available: 16 comprehensive project management tools (including create_sprint)");
+    console.error("Tools available: 17 comprehensive project management tools (including list_sprints)");
   }
 }
 
