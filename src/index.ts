@@ -22,7 +22,7 @@ class GitHubProjectManagerServer {
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '2.2.0',
+        version: '2.3.0',
       }
     );
 
@@ -211,6 +211,18 @@ class GitHubProjectManagerServer {
               required: []
             }
           },
+          {
+            name: 'get_current_sprint',
+            description: 'Get detailed information about the currently active sprint',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                include_issues: { type: 'boolean', description: 'Include list of sprint issues (default: true)' },
+                include_burndown: { type: 'boolean', description: 'Include burndown and velocity data (default: true)' }
+              },
+              required: []
+            }
+          },
           // MILESTONE MANAGEMENT
           {
             name: 'create_milestone',
@@ -371,6 +383,8 @@ class GitHubProjectManagerServer {
             return await this.handleCreateSprint(args);
           case 'list_sprints':
             return await this.handleListSprints(args);
+          case 'get_current_sprint':
+            return await this.handleGetCurrentSprint(args);
 
           // MILESTONE MANAGEMENT
           case 'create_milestone':
@@ -651,6 +665,176 @@ class GitHubProjectManagerServer {
       };
     } catch (error: any) {
       throw new Error(`Failed to list sprints: ${error.message}`);
+    }
+  }
+
+  private async handleGetCurrentSprint(args: any) {
+    this.validateRepoConfig();
+
+    try {
+      const includeIssues = args.include_issues !== false; // Default true
+      const includeBurndown = args.include_burndown !== false; // Default true
+
+      // Get all open milestones to find active sprints
+      const response = await this.octokit.rest.issues.listMilestones({
+        owner: this.owner,
+        repo: this.repo,
+        state: 'open',
+        per_page: 100
+      });
+
+      // Find active sprint(s)
+      const today = new Date();
+      const activeSprints = response.data
+        .map(milestone => {
+          const sprintData = this.parseSprintDescription(milestone.description || '');
+          if (!sprintData || sprintData.type !== 'sprint') {
+            return null;
+          }
+
+          const status = this.getSprintStatus(sprintData, milestone);
+          return status === 'active' ? { ...sprintData, milestone, status } : null;
+        })
+        .filter(sprint => sprint !== null);
+
+      if (activeSprints.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: `🔍 **No Active Sprint Found**\n\nThere is currently no active sprint running.\n\n💡 **Actions you can take:**\n• Use 'list_sprints' to see all sprints\n• Use 'create_sprint' to start a new sprint\n• Check if any sprints are planned for the future\n\n📅 A sprint is considered active when today falls between its start and end dates.`
+          }]
+        };
+      }
+
+      // Handle multiple active sprints (edge case)
+      if (activeSprints.length > 1) {
+        let result = `⚠️ **Multiple Active Sprints Detected**\n\nFound ${activeSprints.length} active sprints:\n\n`;
+        activeSprints.forEach((sprint, index) => {
+          result += `${index + 1}. **${sprint.milestone.title}** (#${sprint.milestone.number})\n`;
+          result += `   📅 ${new Date(sprint.startDate).toLocaleDateString()} → ${new Date(sprint.endDate || sprint.milestone.due_on).toLocaleDateString()}\n\n`;
+        });
+        result += `💡 Consider closing or adjusting sprint dates to have only one active sprint at a time.`;
+        
+        return {
+          content: [{
+            type: "text",
+            text: result
+          }]
+        };
+      }
+
+      // Get current active sprint details
+      const currentSprint = activeSprints[0];
+      const milestone = currentSprint.milestone;
+      const startDate = new Date(currentSprint.startDate);
+      const endDate = new Date(currentSprint.endDate || milestone.due_on);
+      const totalIssues = milestone.closed_issues + milestone.open_issues;
+      const progress = totalIssues > 0 ? Math.round((milestone.closed_issues / totalIssues) * 100) : 0;
+
+      // Calculate time metrics
+      const daysRemaining = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      const totalDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      const daysPassed = totalDays - daysRemaining;
+      const timeProgress = totalDays > 0 ? Math.round((daysPassed / totalDays) * 100) : 0;
+
+      // Build result
+      let result = `🟢 **Current Active Sprint**\n\n`;
+      result += `**Sprint:** ${milestone.title}\n`;
+      result += `**Number:** Sprint ${currentSprint.sprintNumber}\n`;
+      result += `**Status:** Active (${daysRemaining} days remaining)\n`;
+      result += `**Duration:** ${currentSprint.duration} days\n`;
+      result += `**Period:** ${startDate.toLocaleDateString()} → ${endDate.toLocaleDateString()}\n\n`;
+
+      // Progress section
+      result += `📊 **Progress Overview**\n`;
+      result += `• **Issue Completion:** ${progress}% (${milestone.closed_issues}/${totalIssues} issues)\n`;
+      result += `• **Time Progress:** ${timeProgress}% (${daysPassed}/${totalDays} days)\n`;
+      
+      if (progress > timeProgress + 10) {
+        result += `• **Velocity:** 🟢 Ahead of schedule\n`;
+      } else if (progress < timeProgress - 10) {
+        result += `• **Velocity:** 🔴 Behind schedule\n`;
+      } else {
+        result += `• **Velocity:** 🟡 On track\n`;
+      }
+      result += `\n`;
+
+      // Goals section
+      if (currentSprint.goals && currentSprint.goals.length > 0) {
+        result += `🎯 **Sprint Goals**\n`;
+        currentSprint.goals.forEach((goal, index) => {
+          result += `${index + 1}. ${goal}\n`;
+        });
+        result += `\n`;
+      }
+
+      // Burndown data
+      if (includeBurndown) {
+        result += `📈 **Burndown Metrics**\n`;
+        const idealBurnRemaining = Math.max(0, totalIssues - Math.round((totalIssues * daysPassed) / totalDays));
+        const actualRemaining = milestone.open_issues;
+        
+        result += `• **Ideal Remaining:** ${idealBurnRemaining} issues\n`;
+        result += `• **Actual Remaining:** ${actualRemaining} issues\n`;
+        
+        if (actualRemaining <= idealBurnRemaining) {
+          result += `• **Trend:** 🟢 Burning down faster than ideal\n`;
+        } else {
+          result += `• **Trend:** 🔴 Burning down slower than ideal\n`;
+        }
+        result += `\n`;
+      }
+
+      // Sprint issues
+      if (includeIssues && totalIssues > 0) {
+        const issuesResponse = await this.octokit.rest.issues.listForRepo({
+          owner: this.owner,
+          repo: this.repo,
+          milestone: milestone.number.toString(),
+          state: 'all',
+          per_page: 100
+        });
+
+        const openIssues = issuesResponse.data.filter(issue => issue.state === 'open');
+        const closedIssues = issuesResponse.data.filter(issue => issue.state === 'closed');
+
+        result += `📋 **Sprint Issues**\n`;
+        
+        if (openIssues.length > 0) {
+          result += `\n**🔓 Open Issues (${openIssues.length}):**\n`;
+          openIssues.forEach(issue => {
+            const labels = issue.labels.map((l: any) => l.name).join(', ') || 'no labels';
+            const assignees = issue.assignees?.map((a: any) => a.login).join(', ') || 'unassigned';
+            result += `• **${issue.title}** (#${issue.number})\n`;
+            result += `  🏷️ ${labels} | 👤 ${assignees}\n`;
+          });
+        }
+
+        if (closedIssues.length > 0) {
+          result += `\n**✅ Completed Issues (${closedIssues.length}):**\n`;
+          closedIssues.forEach(issue => {
+            result += `• **${issue.title}** (#${issue.number})\n`;
+          });
+        }
+        
+        result += `\n`;
+      }
+
+      // Actions section
+      result += `💡 **Available Actions**\n`;
+      result += `• Use 'add_issues_to_sprint' to add more issues\n`;
+      result += `• Use 'get_sprint_metrics' for detailed analytics\n`;
+      result += `• Use 'list_sprints' to see all sprints\n`;
+      result += `• Track progress at: ${milestone.html_url}`;
+
+      return {
+        content: [{
+          type: "text",
+          text: result
+        }]
+      };
+    } catch (error: any) {
+      throw new Error(`Failed to get current sprint: ${error.message}`);
     }
   }
 
@@ -1352,7 +1536,7 @@ class GitHubProjectManagerServer {
     await this.server.connect(transport);
     console.error("GitHub Project Manager MCP server running on stdio");
     console.error(`Repository: ${this.owner}/${this.repo}`);
-    console.error("Tools available: 17 comprehensive project management tools (including list_sprints)");
+    console.error("Tools available: 18 comprehensive project management tools (including get_current_sprint)");
   }
 }
 
