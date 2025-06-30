@@ -22,7 +22,7 @@ class GitHubProjectManagerServer {
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '2.6.0',
+        version: '2.7.0',
       }
     );
 
@@ -259,6 +259,22 @@ class GitHubProjectManagerServer {
               required: ['issue_numbers']
             }
           },
+          {
+            name: 'remove_issues_from_sprint',
+            description: 'Remove multiple issues from an existing sprint and move them back to backlog',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sprint_number: { type: 'number', description: 'Sprint number to remove issues from' },
+                milestone_number: { type: 'number', description: 'Milestone number to remove issues from (alternative to sprint_number)' },
+                issue_numbers: { type: 'array', items: { type: 'number' }, description: 'Array of issue numbers to remove from the sprint' },
+                removal_reason: { type: 'string', description: 'Optional reason for removing issues from sprint' },
+                preserve_labels: { type: 'boolean', description: 'Keep existing labels when removing from sprint (default: true)' },
+                add_comment: { type: 'boolean', description: 'Add a comment explaining the removal (default: false)' }
+              },
+              required: ['issue_numbers']
+            }
+          },
           // MILESTONE MANAGEMENT
           {
             name: 'create_milestone',
@@ -425,6 +441,8 @@ class GitHubProjectManagerServer {
             return await this.handleUpdateSprint(args);
           case 'add_issues_to_sprint':
             return await this.handleAddIssuesToSprint(args);
+          case 'remove_issues_from_sprint':
+            return await this.handleRemoveIssuesFromSprint(args);
 
           // MILESTONE MANAGEMENT
           case 'create_milestone':
@@ -863,6 +881,7 @@ class GitHubProjectManagerServer {
       // Actions section
       result += `💡 **Available Actions**\n`;
       result += `• Use 'add_issues_to_sprint' to add more issues\n`;
+      result += `• Use 'remove_issues_from_sprint' to remove issues\n`;
       result += `• Use 'get_sprint_metrics' for detailed analytics\n`;
       result += `• Use 'list_sprints' to see all sprints\n`;
       result += `• Track progress at: ${milestone.html_url}`;
@@ -1218,6 +1237,7 @@ class GitHubProjectManagerServer {
       // Next actions
       result += `💡 **Next Actions:**\n`;
       result += `• Use 'get_current_sprint' to view sprint details\n`;
+      result += `• Use 'remove_issues_from_sprint' to remove issues if needed\n`;
       result += `• Use 'list_sprints' to see all sprint progress\n`;
       result += `• Use 'get_sprint_metrics' for detailed analytics\n`;
       result += `• Track progress at: ${targetMilestone.html_url}`;
@@ -1230,6 +1250,217 @@ class GitHubProjectManagerServer {
       };
     } catch (error: any) {
       throw new Error(`Failed to add issues to sprint: ${error.message}`);
+    }
+  }
+
+  private async handleRemoveIssuesFromSprint(args: any) {
+    this.validateRepoConfig();
+
+    try {
+      // Validate input
+      if (!args.issue_numbers || !Array.isArray(args.issue_numbers) || args.issue_numbers.length === 0) {
+        throw new Error('Must provide an array of issue numbers to remove from the sprint');
+      }
+
+      // Find the target sprint/milestone
+      let targetMilestone = null;
+      
+      if (args.milestone_number) {
+        // Direct milestone approach
+        const response = await this.octokit.rest.issues.getMilestone({
+          owner: this.owner,
+          repo: this.repo,
+          milestone_number: args.milestone_number
+        });
+        targetMilestone = response.data;
+      } else if (args.sprint_number) {
+        // Find by sprint number
+        const milestonesResponse = await this.octokit.rest.issues.listMilestones({
+          owner: this.owner,
+          repo: this.repo,
+          state: 'all',
+          per_page: 100
+        });
+
+        const targetSprint = milestonesResponse.data.find(m => {
+          const sprintData = this.parseSprintDescription(m.description || '');
+          return sprintData && sprintData.type === 'sprint' && sprintData.sprintNumber === args.sprint_number;
+        });
+
+        if (!targetSprint) {
+          throw new Error(`Sprint #${args.sprint_number} not found`);
+        }
+        targetMilestone = targetSprint;
+      } else {
+        throw new Error('Must provide either sprint_number or milestone_number to identify the target sprint');
+      }
+
+      // Verify this is actually a sprint
+      const sprintData = this.parseSprintDescription(targetMilestone.description || '');
+      if (!sprintData || sprintData.type !== 'sprint') {
+        throw new Error(`Milestone #${targetMilestone.number} is not a sprint`);
+      }
+
+      // Configuration options
+      const preserveLabels = args.preserve_labels !== false; // Default true
+      const addComment = args.add_comment === true; // Default false
+      const removalReason = args.removal_reason || 'Removed from sprint';
+
+      // Process each issue
+      const results = {
+        removed: [],
+        failed: [],
+        warnings: []
+      };
+
+      for (const issueNumber of args.issue_numbers) {
+        try {
+          // Get issue details
+          const issueResponse = await this.octokit.rest.issues.get({
+            owner: this.owner,
+            repo: this.repo,
+            issue_number: issueNumber
+          });
+
+          const issue = issueResponse.data;
+
+          // Check if issue is actually in this sprint
+          if (!issue.milestone || issue.milestone.number !== targetMilestone.number) {
+            results.warnings.push(`Issue #${issueNumber} is not assigned to this sprint`);
+            continue;
+          }
+
+          // Remove issue from sprint by clearing milestone
+          await this.octokit.rest.issues.update({
+            owner: this.owner,
+            repo: this.repo,
+            issue_number: issueNumber,
+            milestone: null // This removes the milestone assignment
+          });
+
+          // Add comment if requested
+          if (addComment) {
+            const commentBody = `🔄 **Removed from Sprint**\n\n**Sprint:** ${targetMilestone.title}\n**Reason:** ${removalReason}\n**Removed on:** ${new Date().toLocaleDateString()}\n\nThis issue has been moved back to the backlog.`;
+            
+            await this.octokit.rest.issues.createComment({
+              owner: this.owner,
+              repo: this.repo,
+              issue_number: issueNumber,
+              body: commentBody
+            });
+          }
+
+          results.removed.push({
+            issueNumber,
+            title: issue.title,
+            labels: issue.labels.map((l: any) => l.name),
+            assignees: issue.assignees?.map((a: any) => a.login) || [],
+            removedFrom: targetMilestone.title,
+            commentAdded: addComment
+          });
+
+        } catch (error: any) {
+          results.failed.push({
+            issueNumber,
+            title: `Unknown (Error: ${error.message})`,
+            errors: [`Failed to process: ${error.message}`]
+          });
+        }
+      }
+
+      // Get updated sprint information
+      const updatedMilestoneResponse = await this.octokit.rest.issues.getMilestone({
+        owner: this.owner,
+        repo: this.repo,
+        milestone_number: targetMilestone.number
+      });
+      const updatedMilestone = updatedMilestoneResponse.data;
+
+      // Build comprehensive result report
+      let result = `📤 **Issues Removed from Sprint**\n\n`;
+      result += `**Sprint:** ${targetMilestone.title}\n`;
+      result += `**Sprint Number:** ${sprintData.sprintNumber}\n`;
+      result += `**Milestone:** #${targetMilestone.number}\n`;
+      if (removalReason) {
+        result += `**Removal Reason:** ${removalReason}\n`;
+      }
+      result += `\n`;
+
+      // Success section
+      if (results.removed.length > 0) {
+        result += `✅ **Successfully Removed (${results.removed.length} issues):**\n`;
+        results.removed.forEach(item => {
+          result += `• **${item.title}** (#${item.issueNumber})\n`;
+          if (item.labels.length > 0) {
+            result += `  🏷️ ${item.labels.join(', ')}\n`;
+          }
+          if (item.assignees.length > 0) {
+            result += `  👤 ${item.assignees.join(', ')}\n`;
+          }
+          if (item.commentAdded) {
+            result += `  💬 Removal comment added\n`;
+          }
+          result += `  📦 Moved to: Backlog\n`;
+        });
+        result += `\n`;
+      }
+
+      // Warnings section
+      if (results.warnings.length > 0) {
+        result += `⚠️ **Warnings (${results.warnings.length}):**\n`;
+        results.warnings.forEach(warning => {
+          result += `• ${warning}\n`;
+        });
+        result += `\n`;
+      }
+
+      // Failures section
+      if (results.failed.length > 0) {
+        result += `❌ **Failed to Remove (${results.failed.length} issues):**\n`;
+        results.failed.forEach(item => {
+          result += `• **${item.title}** (#${item.issueNumber})\n`;
+          item.errors.forEach(error => {
+            result += `  ❗ ${error}\n`;
+          });
+        });
+        result += `\n`;
+      }
+
+      // Updated sprint metrics
+      result += `📊 **Updated Sprint Status:**\n`;
+      result += `• **Total Issues:** ${updatedMilestone.open_issues + updatedMilestone.closed_issues}\n`;
+      result += `• **Open Issues:** ${updatedMilestone.open_issues}\n`;
+      result += `• **Completed Issues:** ${updatedMilestone.closed_issues}\n`;
+      
+      const progress = (updatedMilestone.open_issues + updatedMilestone.closed_issues) > 0 
+        ? Math.round((updatedMilestone.closed_issues / (updatedMilestone.open_issues + updatedMilestone.closed_issues)) * 100)
+        : 0;
+      result += `• **Progress:** ${progress}%\n\n`;
+
+      // Sprint capacity update
+      if (results.removed.length > 0) {
+        result += `📈 **Sprint Capacity Update:**\n`;
+        result += `• **Issues Removed:** ${results.removed.length}\n`;
+        result += `• **Capacity Freed:** Approximately ${results.removed.length * 1} developer-days\n`;
+        result += `• **Recommendation:** Consider adding new issues or focusing on remaining sprint goals\n\n`;
+      }
+
+      // Next actions
+      result += `💡 **Next Actions:**\n`;
+      result += `• Use 'get_current_sprint' to view updated sprint details\n`;
+      result += `• Use 'add_issues_to_sprint' to add replacement issues if needed\n`;
+      result += `• Use 'list_issues' with state=open to see backlog issues\n`;
+      result += `• Use 'list_sprints' to see all sprint progress\n`;
+      result += `• Track progress at: ${targetMilestone.html_url}`;
+
+      return {
+        content: [{
+          type: "text",
+          text: result
+        }]
+      };
+    } catch (error: any) {
+      throw new Error(`Failed to remove issues from sprint: ${error.message}`);
     }
   }
 
@@ -1931,7 +2162,7 @@ class GitHubProjectManagerServer {
     await this.server.connect(transport);
     console.error("GitHub Project Manager MCP server running on stdio");
     console.error(`Repository: ${this.owner}/${this.repo}`);
-    console.error("Tools available: 20 comprehensive project management tools (including add_issues_to_sprint)");
+    console.error("Tools available: 21 comprehensive project management tools (including remove_issues_from_sprint)");
   }
 }
 
