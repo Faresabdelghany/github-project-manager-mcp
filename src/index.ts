@@ -22,7 +22,7 @@ class GitHubProjectManagerServer {
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '2.4.0',
+        version: '2.6.0',
       }
     );
 
@@ -243,6 +243,22 @@ class GitHubProjectManagerServer {
               required: []
             }
           },
+          {
+            name: 'add_issues_to_sprint',
+            description: 'Assign multiple issues to an existing sprint',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sprint_number: { type: 'number', description: 'Sprint number to add issues to' },
+                milestone_number: { type: 'number', description: 'Milestone number to add issues to (alternative to sprint_number)' },
+                issue_numbers: { type: 'array', items: { type: 'number' }, description: 'Array of issue numbers to add to the sprint' },
+                validate_state: { type: 'boolean', description: 'Only add open issues (default: true)' },
+                allow_reassignment: { type: 'boolean', description: 'Allow moving issues from other sprints (default: false)' },
+                max_capacity_check: { type: 'boolean', description: 'Check if adding issues exceeds sprint capacity (default: false)' }
+              },
+              required: ['issue_numbers']
+            }
+          },
           // MILESTONE MANAGEMENT
           {
             name: 'create_milestone',
@@ -407,6 +423,8 @@ class GitHubProjectManagerServer {
             return await this.handleGetCurrentSprint(args);
           case 'update_sprint':
             return await this.handleUpdateSprint(args);
+          case 'add_issues_to_sprint':
+            return await this.handleAddIssuesToSprint(args);
 
           // MILESTONE MANAGEMENT
           case 'create_milestone':
@@ -996,6 +1014,222 @@ class GitHubProjectManagerServer {
       };
     } catch (error: any) {
       throw new Error(`Failed to update sprint: ${error.message}`);
+    }
+  }
+
+  private async handleAddIssuesToSprint(args: any) {
+    this.validateRepoConfig();
+
+    try {
+      // Validate input
+      if (!args.issue_numbers || !Array.isArray(args.issue_numbers) || args.issue_numbers.length === 0) {
+        throw new Error('Must provide an array of issue numbers to add to the sprint');
+      }
+
+      // Find the target sprint/milestone
+      let targetMilestone = null;
+      
+      if (args.milestone_number) {
+        // Direct milestone approach
+        const response = await this.octokit.rest.issues.getMilestone({
+          owner: this.owner,
+          repo: this.repo,
+          milestone_number: args.milestone_number
+        });
+        targetMilestone = response.data;
+      } else if (args.sprint_number) {
+        // Find by sprint number
+        const milestonesResponse = await this.octokit.rest.issues.listMilestones({
+          owner: this.owner,
+          repo: this.repo,
+          state: 'all',
+          per_page: 100
+        });
+
+        const targetSprint = milestonesResponse.data.find(m => {
+          const sprintData = this.parseSprintDescription(m.description || '');
+          return sprintData && sprintData.type === 'sprint' && sprintData.sprintNumber === args.sprint_number;
+        });
+
+        if (!targetSprint) {
+          throw new Error(`Sprint #${args.sprint_number} not found`);
+        }
+        targetMilestone = targetSprint;
+      } else {
+        throw new Error('Must provide either sprint_number or milestone_number to identify the target sprint');
+      }
+
+      // Verify this is actually a sprint
+      const sprintData = this.parseSprintDescription(targetMilestone.description || '');
+      if (!sprintData || sprintData.type !== 'sprint') {
+        throw new Error(`Milestone #${targetMilestone.number} is not a sprint`);
+      }
+
+      // Configuration options
+      const validateState = args.validate_state !== false; // Default true
+      const allowReassignment = args.allow_reassignment === true; // Default false
+      const maxCapacityCheck = args.max_capacity_check === true; // Default false
+
+      // Process each issue
+      const results = {
+        assigned: [],
+        failed: [],
+        warnings: []
+      };
+
+      for (const issueNumber of args.issue_numbers) {
+        try {
+          // Get issue details
+          const issueResponse = await this.octokit.rest.issues.get({
+            owner: this.owner,
+            repo: this.repo,
+            issue_number: issueNumber
+          });
+
+          const issue = issueResponse.data;
+
+          // Validation checks
+          const validationErrors = [];
+
+          // Check if issue is open (if validation enabled)
+          if (validateState && issue.state !== 'open') {
+            validationErrors.push(`Issue #${issueNumber} is ${issue.state}, not open`);
+          }
+
+          // Check for existing milestone assignment
+          if (issue.milestone && !allowReassignment) {
+            if (issue.milestone.number === targetMilestone.number) {
+              results.warnings.push(`Issue #${issueNumber} already assigned to this sprint`);
+              continue;
+            } else {
+              validationErrors.push(`Issue #${issueNumber} already assigned to milestone "${issue.milestone.title}"`);
+            }
+          }
+
+          // If validation failed, record and continue
+          if (validationErrors.length > 0) {
+            results.failed.push({
+              issueNumber,
+              title: issue.title,
+              errors: validationErrors
+            });
+            continue;
+          }
+
+          // Assign issue to sprint milestone
+          await this.octokit.rest.issues.update({
+            owner: this.owner,
+            repo: this.repo,
+            issue_number: issueNumber,
+            milestone: targetMilestone.number
+          });
+
+          results.assigned.push({
+            issueNumber,
+            title: issue.title,
+            labels: issue.labels.map((l: any) => l.name),
+            assignees: issue.assignees?.map((a: any) => a.login) || [],
+            previousMilestone: issue.milestone?.title || null
+          });
+
+        } catch (error: any) {
+          results.failed.push({
+            issueNumber,
+            title: `Unknown (Error: ${error.message})`,
+            errors: [`Failed to process: ${error.message}`]
+          });
+        }
+      }
+
+      // Get updated sprint information
+      const updatedMilestoneResponse = await this.octokit.rest.issues.getMilestone({
+        owner: this.owner,
+        repo: this.repo,
+        milestone_number: targetMilestone.number
+      });
+      const updatedMilestone = updatedMilestoneResponse.data;
+
+      // Build comprehensive result report
+      let result = `📋 **Issues Added to Sprint**\n\n`;
+      result += `**Sprint:** ${targetMilestone.title}\n`;
+      result += `**Sprint Number:** ${sprintData.sprintNumber}\n`;
+      result += `**Milestone:** #${targetMilestone.number}\n\n`;
+
+      // Success section
+      if (results.assigned.length > 0) {
+        result += `✅ **Successfully Assigned (${results.assigned.length} issues):**\n`;
+        results.assigned.forEach(item => {
+          result += `• **${item.title}** (#${item.issueNumber})\n`;
+          if (item.labels.length > 0) {
+            result += `  🏷️ ${item.labels.join(', ')}\n`;
+          }
+          if (item.assignees.length > 0) {
+            result += `  👤 ${item.assignees.join(', ')}\n`;
+          }
+          if (item.previousMilestone) {
+            result += `  📦 Moved from: ${item.previousMilestone}\n`;
+          }
+        });
+        result += `\n`;
+      }
+
+      // Warnings section
+      if (results.warnings.length > 0) {
+        result += `⚠️ **Warnings (${results.warnings.length}):**\n`;
+        results.warnings.forEach(warning => {
+          result += `• ${warning}\n`;
+        });
+        result += `\n`;
+      }
+
+      // Failures section
+      if (results.failed.length > 0) {
+        result += `❌ **Failed to Assign (${results.failed.length} issues):**\n`;
+        results.failed.forEach(item => {
+          result += `• **${item.title}** (#${item.issueNumber})\n`;
+          item.errors.forEach(error => {
+            result += `  ❗ ${error}\n`;
+          });
+        });
+        result += `\n`;
+      }
+
+      // Updated sprint metrics
+      result += `📊 **Updated Sprint Status:**\n`;
+      result += `• **Total Issues:** ${updatedMilestone.open_issues + updatedMilestone.closed_issues}\n`;
+      result += `• **Open Issues:** ${updatedMilestone.open_issues}\n`;
+      result += `• **Completed Issues:** ${updatedMilestone.closed_issues}\n`;
+      
+      const progress = (updatedMilestone.open_issues + updatedMilestone.closed_issues) > 0 
+        ? Math.round((updatedMilestone.closed_issues / (updatedMilestone.open_issues + updatedMilestone.closed_issues)) * 100)
+        : 0;
+      result += `• **Progress:** ${progress}%\n\n`;
+
+      // Capacity check if enabled
+      if (maxCapacityCheck) {
+        const totalIssues = updatedMilestone.open_issues + updatedMilestone.closed_issues;
+        const estimatedCapacity = sprintData.duration * 2; // Rough estimate: 2 issues per day
+        
+        if (totalIssues > estimatedCapacity) {
+          result += `⚠️ **Capacity Warning:** Sprint has ${totalIssues} issues but estimated capacity is ${estimatedCapacity} issues (${sprintData.duration} days). Consider sprint planning review.\n\n`;
+        }
+      }
+
+      // Next actions
+      result += `💡 **Next Actions:**\n`;
+      result += `• Use 'get_current_sprint' to view sprint details\n`;
+      result += `• Use 'list_sprints' to see all sprint progress\n`;
+      result += `• Use 'get_sprint_metrics' for detailed analytics\n`;
+      result += `• Track progress at: ${targetMilestone.html_url}`;
+
+      return {
+        content: [{
+          type: "text",
+          text: result
+        }]
+      };
+    } catch (error: any) {
+      throw new Error(`Failed to add issues to sprint: ${error.message}`);
     }
   }
 
@@ -1697,7 +1931,7 @@ class GitHubProjectManagerServer {
     await this.server.connect(transport);
     console.error("GitHub Project Manager MCP server running on stdio");
     console.error(`Repository: ${this.owner}/${this.repo}`);
-    console.error("Tools available: 19 comprehensive project management tools (including update_sprint)");
+    console.error("Tools available: 20 comprehensive project management tools (including add_issues_to_sprint)");
   }
 }
 
