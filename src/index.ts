@@ -22,12 +22,7 @@ class GitHubProjectManagerServer {
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '1.0.0',
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
+        version: '2.0.0',
       }
     );
 
@@ -38,6 +33,11 @@ class GitHubProjectManagerServer {
     }
 
     this.octokit = new Octokit({ auth: token });
+    this.graphqlWithAuth = graphql.defaults({
+      headers: {
+        authorization: `token ${token}`,
+      },
+    });
     this.owner = process.env.GITHUB_OWNER || '';
     this.repo = process.env.GITHUB_REPO || '';
 
@@ -47,6 +47,20 @@ class GitHubProjectManagerServer {
   private validateRepoConfig() {
     if (!this.owner || !this.repo) {
       throw new Error('GITHUB_OWNER and GITHUB_REPO environment variables are required');
+    }
+  }
+
+  private formatDateForGitHub(dateString?: string): string | undefined {
+    if (!dateString) return undefined;
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) {
+        throw new Error('Invalid date format');
+      }
+      return date.toISOString();
+    } catch (error) {
+      console.error('Date formatting error:', error);
+      return undefined;
     }
   }
 
@@ -77,6 +91,21 @@ class GitHubProjectManagerServer {
                 status: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Project status filter' }
               },
               required: ['status']
+            }
+          },
+          {
+            name: 'add_item_to_project',
+            description: 'Add an issue or pull request to a GitHub project',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+                content_id: { type: 'string', description: 'Issue or Pull Request Node ID' },
+                content_type: { type: 'string', enum: ['issue', 'pull_request'], description: 'Type of content' },
+                issue_number: { type: 'number', description: 'Issue number (alternative to content_id)' },
+                pr_number: { type: 'number', description: 'Pull request number (alternative to content_id)' }
+              },
+              required: ['project_id']
             }
           },
           // MILESTONE MANAGEMENT
@@ -231,6 +260,8 @@ class GitHubProjectManagerServer {
             return await this.handleCreateProject(args);
           case 'list_projects':
             return await this.handleListProjects(args);
+          case 'add_item_to_project':
+            return await this.handleAddItemToProject(args);
 
           // MILESTONE MANAGEMENT
           case 'create_milestone':
@@ -274,21 +305,297 @@ class GitHubProjectManagerServer {
 
   // PROJECT MANAGEMENT IMPLEMENTATIONS
   private async handleCreateProject(args: any) {
-    return {
-      content: [{
-        type: "text",
-        text: `🚀 **Project Creation** (GitHub Projects v2)\n\n**Note:** Creating GitHub Projects v2 requires GraphQL API access.\n\n**Project Details:**\n- Title: ${args.title}\n- Description: ${args.description || 'None'}\n- Visibility: ${args.visibility}\n\n💡 **Alternative:** Use GitHub web interface to create Projects v2`
-      }]
-    };
+    this.validateRepoConfig();
+
+    try {
+      // Get repository and owner IDs
+      const getRepoQuery = `
+        query($owner: String!, $name: String!) {
+          repository(owner: $owner, name: $name) {
+            id
+            owner {
+              id
+              login
+            }
+          }
+        }
+      `;
+
+      const repoResult = await this.graphqlWithAuth(getRepoQuery, {
+        owner: this.owner,
+        name: this.repo
+      });
+
+      const ownerId = repoResult.repository.owner.id;
+
+      // Create the project
+      const createProjectMutation = `
+        mutation($input: CreateProjectV2Input!) {
+          createProjectV2(input: $input) {
+            projectV2 {
+              id
+              title
+              shortDescription
+              url
+              number
+              public
+              createdAt
+              updatedAt
+            }
+          }
+        }
+      `;
+
+      const projectResult = await this.graphqlWithAuth(createProjectMutation, {
+        input: {
+          ownerId: ownerId,
+          title: args.title,
+          shortDescription: args.description || null,
+          public: args.visibility === 'public'
+        }
+      });
+
+      const project = projectResult.createProjectV2.projectV2;
+      
+      return {
+        content: [{
+          type: "text",
+          text: `✅ **GitHub Project v2 created successfully!**\n\n**Title:** ${project.title}\n**Number:** #${project.number}\n**Description:** ${project.shortDescription || 'None'}\n**Visibility:** ${project.public ? '🌐 Public' : '🔒 Private'}\n**Created:** ${new Date(project.createdAt).toLocaleDateString()}\n**ID:** ${project.id}\n**URL:** ${project.url}`
+        }]
+      };
+    } catch (error: any) {
+      if (error.status === 401) {
+        throw new Error('GitHub authentication failed. Please check your GITHUB_TOKEN has "project" scope permissions.');
+      }
+      if (error.errors) {
+        const errorMessages = error.errors.map((e: any) => e.message).join(', ');
+        throw new Error(`GraphQL Error: ${errorMessages}`);
+      }
+      throw new Error(`Failed to create project: ${error.message}`);
+    }
   }
 
   private async handleListProjects(args: any) {
-    return {
-      content: [{
-        type: "text",
-        text: `📋 **GitHub Projects List**\n\n**Note:** Listing GitHub Projects v2 requires GraphQL API access.\n\n**Filter:** ${args.status} projects\n\n💡 **Alternative:** View projects at GitHub web interface`
-      }]
-    };
+    this.validateRepoConfig();
+
+    try {
+      // Get owner projects
+      const getOwnerQuery = `
+        query($owner: String!) {
+          repositoryOwner(login: $owner) {
+            id
+            login
+            ... on User {
+              projectsV2(first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+                nodes {
+                  id
+                  title
+                  shortDescription
+                  url
+                  number
+                  public
+                  closed
+                  createdAt
+                  updatedAt
+                  items {
+                    totalCount
+                  }
+                }
+                totalCount
+              }
+            }
+            ... on Organization {
+              projectsV2(first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+                nodes {
+                  id
+                  title
+                  shortDescription
+                  url
+                  number
+                  public
+                  closed
+                  createdAt
+                  updatedAt
+                  items {
+                    totalCount
+                  }
+                }
+                totalCount
+              }
+            }
+          }
+        }
+      `;
+
+      const ownerResult = await this.graphqlWithAuth(getOwnerQuery, {
+        owner: this.owner
+      });
+
+      const projects = ownerResult.repositoryOwner.projectsV2.nodes;
+      const totalCount = ownerResult.repositoryOwner.projectsV2.totalCount;
+
+      // Filter projects based on status
+      let filteredProjects = projects;
+      if (args.status === 'open') {
+        filteredProjects = projects.filter((p: any) => !p.closed);
+      } else if (args.status === 'closed') {
+        filteredProjects = projects.filter((p: any) => p.closed);
+      }
+
+      let result = `📋 **GitHub Projects v2** - Found ${filteredProjects.length} projects (${totalCount} total)\n\n`;
+      
+      if (filteredProjects.length === 0) {
+        result += `No ${args.status} projects found.`;
+      } else {
+        filteredProjects.forEach((project: any) => {
+          const statusIcon = project.closed ? '🔒' : '🔓';
+          const visibilityIcon = project.public ? '🌐' : '🔒';
+          
+          result += `${statusIcon} **${project.title}** (#${project.number})\n`;
+          result += `   📝 ${project.shortDescription || 'No description'}\n`;
+          result += `   ${visibilityIcon} ${project.public ? 'Public' : 'Private'}\n`;
+          result += `   📦 Items: ${project.items.totalCount}\n`;
+          result += `   📅 Updated: ${new Date(project.updatedAt).toLocaleDateString()}\n`;
+          result += `   🆔 ID: ${project.id}\n`;
+          result += `   🔗 ${project.url}\n\n`;
+        });
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: result
+        }]
+      };
+    } catch (error: any) {
+      if (error.status === 401) {
+        throw new Error('GitHub authentication failed. Please check your GITHUB_TOKEN has "project" scope permissions.');
+      }
+      if (error.errors) {
+        const errorMessages = error.errors.map((e: any) => e.message).join(', ');
+        throw new Error(`GraphQL Error: ${errorMessages}`);
+      }
+      throw new Error(`Failed to list projects: ${error.message}`);
+    }
+  }
+
+  private async handleAddItemToProject(args: any) {
+    this.validateRepoConfig();
+
+    try {
+      let contentId = args.content_id;
+      let contentType = args.content_type;
+
+      // If no direct content_id provided, resolve from issue/PR number
+      if (!contentId) {
+        if (args.issue_number) {
+          const issueQuery = `
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                issue(number: $number) {
+                  id
+                  title
+                  number
+                  url
+                }
+              }
+            }
+          `;
+
+          const issueResult = await this.graphqlWithAuth(issueQuery, {
+            owner: this.owner,
+            name: this.repo,
+            number: args.issue_number
+          });
+
+          if (!issueResult.repository.issue) {
+            throw new Error(`Issue #${args.issue_number} not found`);
+          }
+
+          contentId = issueResult.repository.issue.id;
+          contentType = 'issue';
+        } else if (args.pr_number) {
+          const prQuery = `
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) {
+                  id
+                  title
+                  number
+                  url
+                }
+              }
+            }
+          `;
+
+          const prResult = await this.graphqlWithAuth(prQuery, {
+            owner: this.owner,
+            name: this.repo,
+            number: args.pr_number
+          });
+
+          if (!prResult.repository.pullRequest) {
+            throw new Error(`Pull Request #${args.pr_number} not found`);
+          }
+
+          contentId = prResult.repository.pullRequest.id;
+          contentType = 'pull_request';
+        } else {
+          throw new Error('Must provide either content_id/content_type, issue_number, or pr_number');
+        }
+      }
+
+      // Add item to project
+      const addItemMutation = `
+        mutation($input: AddProjectV2ItemByIdInput!) {
+          addProjectV2ItemById(input: $input) {
+            item {
+              id
+              content {
+                ... on Issue {
+                  id
+                  title
+                  number
+                  url
+                }
+                ... on PullRequest {
+                  id
+                  title
+                  number
+                  url
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const addResult = await this.graphqlWithAuth(addItemMutation, {
+        input: {
+          projectId: args.project_id,
+          contentId: contentId
+        }
+      });
+
+      const item = addResult.addProjectV2ItemById.item;
+      const content = item.content;
+      
+      return {
+        content: [{
+          type: "text",
+          text: `✅ **Item added to project successfully!**\n\n**Type:** ${contentType === 'issue' ? 'Issue' : 'Pull Request'}\n**Title:** ${content.title}\n**Number:** #${content.number}\n**URL:** ${content.url}\n**Project Item ID:** ${item.id}`
+        }]
+      };
+    } catch (error: any) {
+      if (error.status === 401) {
+        throw new Error('GitHub authentication failed. Please check your GITHUB_TOKEN has "project" scope permissions.');
+      }
+      if (error.errors) {
+        const errorMessages = error.errors.map((e: any) => e.message).join(', ');
+        throw new Error(`GraphQL Error: ${errorMessages}`);
+      }
+      throw new Error(`Failed to add item to project: ${error.message}`);
+    }
   }
 
   // MILESTONE MANAGEMENT IMPLEMENTATIONS
@@ -301,7 +608,7 @@ class GitHubProjectManagerServer {
         repo: this.repo,
         title: args.title,
         description: args.description,
-        due_on: args.due_on,
+        due_on: this.formatDateForGitHub(args.due_on),
         state: args.state || 'open'
       });
 
@@ -514,7 +821,7 @@ class GitHubProjectManagerServer {
       return {
         content: [{
           type: "text",
-          text: `✅ **Issue created successfully!**\n\n**Title:** ${response.data.title}\n**Number:** #${response.data.number}\n**State:** ${response.data.state}\n**Labels:** ${response.data.labels.map((l: any) => l.name).join(', ') || 'None'}\n**Assignees:** ${response.data.assignees?.map((a: any) => a.login).join(', ') || 'None'}\n**URL:** ${response.data.html_url}`
+          text: `✅ **Issue created successfully!**\n\n**Title:** ${response.data.title}\n**Number:** #${response.data.number}\n**State:** ${response.data.state}\n**Labels:** ${response.data.labels.map((l: any) => l.name).join(', ') || 'None'}\n**Assignees:** ${response.data.assignees?.map((a: any) => a.login).join(', ') || 'None'}\n**Node ID:** ${response.data.node_id}\n**URL:** ${response.data.html_url}\n\n💡 **Use Node ID with 'add_item_to_project' to add to projects.**`
         }]
       };
     } catch (error: any) {
@@ -546,7 +853,8 @@ class GitHubProjectManagerServer {
           result += `   🏷️ Labels: ${issue.labels.map((l: any) => l.name).join(', ') || 'None'}\n`;
           result += `   👤 Assignees: ${issue.assignees?.map((a: any) => a.login).join(', ') || 'None'}\n`;
           result += `   📅 Created: ${new Date(issue.created_at).toLocaleDateString()}\n`;
-          result += `   🔗 ${issue.html_url}\n\n`;
+          result += `   🔗 ${issue.html_url}\n`;
+          result += `   🆔 Node ID: ${issue.node_id}\n\n`;
         });
       }
 
@@ -697,7 +1005,7 @@ class GitHubProjectManagerServer {
     await this.server.connect(transport);
     console.error("GitHub Project Manager MCP server running on stdio");
     console.error(`Repository: ${this.owner}/${this.repo}`);
-    console.error("Tools available: 14 comprehensive project management tools");
+    console.error("Tools available: 15 comprehensive project management tools");
   }
 }
 
