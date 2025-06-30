@@ -76,10 +76,10 @@ class GitHubProjectManagerServer {
               type: 'object',
               properties: {
                 title: { type: 'string', description: 'Project title' },
-                description: { type: 'string', description: 'Project description' },
-                visibility: { type: 'string', enum: ['private', 'public'], description: 'Project visibility' }
+                description: { type: 'string', description: 'Project description (note: will be mentioned but not set due to API limitations)' },
+                visibility: { type: 'string', enum: ['private', 'public'], description: 'Project visibility (note: will be mentioned but not set due to API limitations)' }
               },
-              required: ['title', 'visibility']
+              required: ['title']
             }
           },
           {
@@ -328,17 +328,15 @@ class GitHubProjectManagerServer {
 
       const ownerId = repoResult.repository.owner.id;
 
-      // Create the project
+      // Create the project (using only supported fields)
       const createProjectMutation = `
         mutation($input: CreateProjectV2Input!) {
           createProjectV2(input: $input) {
             projectV2 {
               id
               title
-              shortDescription
               url
               number
-              public
               createdAt
               updatedAt
             }
@@ -349,9 +347,7 @@ class GitHubProjectManagerServer {
       const projectResult = await this.graphqlWithAuth(createProjectMutation, {
         input: {
           ownerId: ownerId,
-          title: args.title,
-          shortDescription: args.description || null,
-          public: args.visibility === 'public'
+          title: args.title
         }
       });
 
@@ -360,7 +356,7 @@ class GitHubProjectManagerServer {
       return {
         content: [{
           type: "text",
-          text: `✅ **GitHub Project v2 created successfully!**\n\n**Title:** ${project.title}\n**Number:** #${project.number}\n**Description:** ${project.shortDescription || 'None'}\n**Visibility:** ${project.public ? '🌐 Public' : '🔒 Private'}\n**Created:** ${new Date(project.createdAt).toLocaleDateString()}\n**ID:** ${project.id}\n**URL:** ${project.url}`
+          text: `✅ **GitHub Project v2 created successfully!**\n\n**Title:** ${project.title}\n**Number:** #${project.number}\n**Created:** ${new Date(project.createdAt).toLocaleDateString()}\n**ID:** ${project.id}\n**URL:** ${project.url}\n\n💡 **Note:** Description "${args.description || 'N/A'}" and visibility "${args.visibility || 'N/A'}" mentioned but not set due to GitHub GraphQL API limitations. You can update these manually in the project settings.`
         }]
       };
     } catch (error: any) {
