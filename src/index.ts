@@ -22,7 +22,7 @@ class GitHubProjectManagerServer {
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '2.9.0',
+        version: '2.9.1',
       }
     );
 
@@ -965,6 +965,9 @@ class GitHubProjectManagerServer {
       const progress = totalIssues > 0 ? Math.round((targetMilestone.closed_issues / totalIssues) * 100) : 0;
       const timeProgress = totalDays > 0 ? Math.round((daysPassed / totalDays) * 100) : 0;
 
+      // FIX: Define actualRemaining early to be used in both burndown and velocity sections
+      const actualRemaining = targetMilestone.open_issues;
+
       let result = `📊 **Sprint Analytics & Metrics**\n\n`;
       result += `**Sprint:** ${targetMilestone.title}\n`;
       result += `**Number:** Sprint ${sprintData.sprintNumber}\n`;
@@ -985,7 +988,6 @@ class GitHubProjectManagerServer {
       if (includeBurndown) {
         result += `🔥 **Burndown Analysis**\n`;
         const idealBurnRemaining = Math.max(0, totalIssues - Math.round((totalIssues * daysPassed) / totalDays));
-        const actualRemaining = targetMilestone.open_issues;
         const burnRate = daysPassed > 0 ? targetMilestone.closed_issues / daysPassed : 0;
         
         result += `• **Ideal Remaining:** ${idealBurnRemaining} issues\n`;
