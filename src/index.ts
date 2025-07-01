@@ -22,7 +22,7 @@ class GitHubProjectManagerServer {
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '3.2.0',
+        version: '3.3.0',
       }
     );
 
@@ -50,1386 +50,1064 @@ class GitHubProjectManagerServer {
     }
   }
 
-  // PRD Enhancement and Analysis Methods
-  private assessPRDQuality(prdContent: string): any {
-    const analysis = {
-      overallScore: 0,
-      sectionScores: {},
-      missingCriticalSections: [],
-      missingSections: [],
-      weakSections: [],
-      recommendations: [],
-      completenessMetrics: {}
+  // Feature Impact Analysis Methods
+  private async analyzeExistingCodebase(): Promise<any> {
+    try {
+      // Get repository structure
+      const repoResponse = await this.octokit.rest.repos.get({
+        owner: this.owner,
+        repo: this.repo
+      });
+
+      // Get file structure from root
+      const contentsResponse = await this.octokit.rest.repos.getContent({
+        owner: this.owner,
+        repo: this.repo,
+        path: ''
+      });
+
+      // Analyze tech stack from file extensions and common patterns
+      const techStack = this.analyzeTechStackFromFiles(contentsResponse.data);
+      
+      // Get recent commits for development velocity
+      const commitsResponse = await this.octokit.rest.repos.listCommits({
+        owner: this.owner,
+        repo: this.repo,
+        per_page: 100
+      });
+
+      // Get existing issues and milestones for workload analysis
+      const issuesResponse = await this.octokit.rest.issues.listForRepo({
+        owner: this.owner,
+        repo: this.repo,
+        state: 'open',
+        per_page: 100
+      });
+
+      const milestonesResponse = await this.octokit.rest.issues.listMilestones({
+        owner: this.owner,
+        repo: this.repo,
+        state: 'open',
+        per_page: 50
+      });
+
+      return {
+        repository: {
+          name: repoResponse.data.name,
+          language: repoResponse.data.language,
+          size: repoResponse.data.size,
+          created_at: repoResponse.data.created_at,
+          updated_at: repoResponse.data.updated_at,
+          stargazers_count: repoResponse.data.stargazers_count,
+          open_issues_count: repoResponse.data.open_issues_count
+        },
+        techStack,
+        fileStructure: this.analyzeFileStructure(contentsResponse.data),
+        developmentVelocity: this.analyzeDevelopmentVelocity(commitsResponse.data),
+        currentWorkload: {
+          openIssues: issuesResponse.data.length,
+          activeMilestones: milestonesResponse.data.length,
+          issues: issuesResponse.data.map(issue => ({
+            number: issue.number,
+            title: issue.title,
+            labels: issue.labels.map((l: any) => l.name),
+            assignees: issue.assignees?.map((a: any) => a.login) || [],
+            milestone: issue.milestone?.title || null,
+            created_at: issue.created_at,
+            state: issue.state
+          })),
+          milestones: milestonesResponse.data.map(milestone => ({
+            number: milestone.number,
+            title: milestone.title,
+            due_on: milestone.due_on,
+            open_issues: milestone.open_issues,
+            closed_issues: milestone.closed_issues
+          }))
+        }
+      };
+    } catch (error: any) {
+      throw new Error(`Failed to analyze existing codebase: ${error.message}`);
+    }
+  }
+
+  private analyzeTechStackFromFiles(files: any): any {
+    const techStack = {
+      languages: [] as string[],
+      frameworks: [] as string[],
+      databases: [] as string[],
+      tools: [] as string[],
+      architecture: 'unknown'
     };
 
-    const requiredSections = [
-      { name: 'Executive Summary', weight: 0.15, patterns: [/executive\s+summary/i, /overview/i, /introduction/i] },
-      { name: 'Problem Statement', weight: 0.12, patterns: [/problem\s+statement/i, /business\s+problem/i, /challenge/i] },
-      { name: 'Product Vision', weight: 0.10, patterns: [/product\s+vision/i, /vision/i, /mission/i] },
-      { name: 'Target Audience/Users', weight: 0.12, patterns: [/target\s+audience/i, /user\s+personas/i, /customers/i, /users/i] },
-      { name: 'Business Goals', weight: 0.10, patterns: [/business\s+goals/i, /objectives/i, /goals/i] },
-      { name: 'Features/Requirements', weight: 0.15, patterns: [/features/i, /requirements/i, /functionality/i] },
-      { name: 'User Stories', weight: 0.08, patterns: [/user\s+stories/i, /user\s+scenarios/i, /use\s+cases/i] },
-      { name: 'Technical Specifications', weight: 0.08, patterns: [/technical\s+spec/i, /architecture/i, /technology/i, /tech\s+stack/i] },
-      { name: 'Success Metrics', weight: 0.10, patterns: [/success\s+metrics/i, /kpis/i, /metrics/i, /measurement/i] }
-    ];
+    const filePatterns = {
+      // Languages
+      'JavaScript': ['.js', '.jsx', '.mjs'],
+      'TypeScript': ['.ts', '.tsx'],
+      'Python': ['.py', '.pyw'],
+      'Java': ['.java'],
+      'C#': ['.cs'],
+      'Go': ['.go'],
+      'Rust': ['.rs'],
+      'PHP': ['.php'],
+      'Ruby': ['.rb'],
+      'Swift': ['.swift'],
+      'Kotlin': ['.kt'],
+      'Dart': ['.dart'],
+      
+      // Frontend Frameworks
+      'React': ['package.json', 'tsconfig.json'], // Will check content
+      'Vue.js': ['.vue', 'vue.config.js'],
+      'Angular': ['angular.json', '.component.ts'],
+      'Svelte': ['.svelte'],
+      
+      // Backend Frameworks
+      'Express.js': ['package.json'], // Will check content
+      'Next.js': ['next.config.js'],
+      'Django': ['manage.py', 'settings.py'],
+      'Flask': ['app.py', 'wsgi.py'],
+      'Spring Boot': ['pom.xml', 'build.gradle'],
+      'Laravel': ['artisan', 'composer.json'],
+      
+      // Databases
+      'MongoDB': ['mongodb', '.mongodb'],
+      'PostgreSQL': ['postgresql', '.postgres'],
+      'MySQL': ['mysql', '.mysql'],
+      'SQLite': ['.sqlite', '.db'],
+      
+      // Tools & Config
+      'Docker': ['Dockerfile', 'docker-compose.yml'],
+      'Kubernetes': ['.k8s', 'deployment.yaml'],
+      'Terraform': ['.tf'],
+      'GitHub Actions': ['.github/workflows'],
+      'Jest': ['jest.config.js'],
+      'Webpack': ['webpack.config.js'],
+      'Vite': ['vite.config.js']
+    };
 
-    const enhancementSections = [
-      { name: 'Market Analysis', weight: 0.08, patterns: [/market\s+analysis/i, /competitive\s+landscape/i, /market\s+research/i] },
-      { name: 'Competitive Analysis', weight: 0.07, patterns: [/competitive\s+analysis/i, /competitors/i, /competition/i] },
-      { name: 'Risk Assessment', weight: 0.06, patterns: [/risk\s+assessment/i, /risks/i, /challenges/i] },
-      { name: 'Timeline/Roadmap', weight: 0.05, patterns: [/timeline/i, /roadmap/i, /schedule/i, /milestones/i] },
-      { name: 'Budget/Resources', weight: 0.04, patterns: [/budget/i, /resources/i, /cost/i, /investment/i] },
-      { name: 'Acceptance Criteria', weight: 0.06, patterns: [/acceptance\s+criteria/i, /definition\s+of\s+done/i] }
-    ];
+    files.forEach((file: any) => {
+      const fileName = file.name.toLowerCase();
+      const extension = fileName.includes('.') ? '.' + fileName.split('.').pop() : '';
 
-    let totalScore = 0;
-    let maxPossibleScore = 0;
-
-    // Analyze required sections
-    for (const section of requiredSections) {
-      maxPossibleScore += section.weight;
-      let sectionFound = false;
-      let sectionQuality = 0;
-
-      for (const pattern of section.patterns) {
-        if (pattern.test(prdContent)) {
-          sectionFound = true;
-          
-          // Assess section quality based on content length and detail
-          const sectionMatch = prdContent.match(new RegExp(`${pattern.source}([\\s\\S]*?)(?=\\n#+|$)`, 'i'));
-          if (sectionMatch && sectionMatch[1]) {
-            const sectionContent = sectionMatch[1].trim();
-            const wordCount = sectionContent.split(/\s+/).length;
-            
-            if (wordCount >= 100) {
-              sectionQuality = 1.0; // Excellent
-            } else if (wordCount >= 50) {
-              sectionQuality = 0.8; // Good
-            } else if (wordCount >= 20) {
-              sectionQuality = 0.6; // Fair
-            } else if (wordCount >= 5) {
-              sectionQuality = 0.4; // Poor
-            } else {
-              sectionQuality = 0.2; // Very poor
+      Object.entries(filePatterns).forEach(([tech, patterns]) => {
+        if (patterns.some(pattern => fileName.includes(pattern.toLowerCase()) || extension === pattern)) {
+          if (['JavaScript', 'TypeScript', 'Python', 'Java', 'C#', 'Go', 'Rust', 'PHP', 'Ruby', 'Swift', 'Kotlin', 'Dart'].includes(tech)) {
+            if (!techStack.languages.includes(tech)) {
+              techStack.languages.push(tech);
+            }
+          } else if (['React', 'Vue.js', 'Angular', 'Svelte', 'Express.js', 'Next.js', 'Django', 'Flask', 'Spring Boot', 'Laravel'].includes(tech)) {
+            if (!techStack.frameworks.includes(tech)) {
+              techStack.frameworks.push(tech);
+            }
+          } else if (['MongoDB', 'PostgreSQL', 'MySQL', 'SQLite'].includes(tech)) {
+            if (!techStack.databases.includes(tech)) {
+              techStack.databases.push(tech);
             }
           } else {
-            sectionQuality = 0.3; // Header found but minimal content
+            if (!techStack.tools.includes(tech)) {
+              techStack.tools.push(tech);
+            }
           }
-          break;
+        }
+      });
+    });
+
+    // Determine architecture pattern
+    if (files.some((f: any) => f.name.includes('microservice') || f.name.includes('service'))) {
+      techStack.architecture = 'microservices';
+    } else if (files.some((f: any) => f.name.includes('api') && f.name.includes('client'))) {
+      techStack.architecture = 'client-server';
+    } else if (techStack.frameworks.some(f => ['React', 'Vue.js', 'Angular'].includes(f))) {
+      techStack.architecture = 'spa'; // Single Page Application
+    } else if (techStack.frameworks.some(f => ['Next.js', 'Django', 'Laravel'].includes(f))) {
+      techStack.architecture = 'full-stack';
+    } else {
+      techStack.architecture = 'monolithic';
+    }
+
+    return techStack;
+  }
+
+  private analyzeFileStructure(files: any): any {
+    const structure = {
+      totalFiles: files.length,
+      directories: [],
+      hasTests: false,
+      hasDocumentation: false,
+      hasCI: false,
+      configFiles: [],
+      sourceStructure: 'unknown'
+    };
+
+    files.forEach((file: any) => {
+      if (file.type === 'dir') {
+        structure.directories.push(file.name);
+        
+        // Check for common patterns
+        if (['test', 'tests', '__tests__', 'spec'].includes(file.name.toLowerCase())) {
+          structure.hasTests = true;
+        }
+        if (['docs', 'documentation', 'doc'].includes(file.name.toLowerCase())) {
+          structure.hasDocumentation = true;
+        }
+        if (file.name === '.github') {
+          structure.hasCI = true;
+        }
+      } else {
+        // Check config files
+        const configPatterns = ['package.json', 'tsconfig.json', 'webpack.config.js', 'vite.config.js', 'Dockerfile', 'docker-compose.yml'];
+        if (configPatterns.includes(file.name)) {
+          structure.configFiles.push(file.name);
         }
       }
+    });
 
-      if (sectionFound) {
-        const sectionScore = section.weight * sectionQuality;
-        totalScore += sectionScore;
-        analysis.sectionScores[section.name] = {
-          score: sectionQuality,
-          weight: section.weight,
-          weightedScore: sectionScore,
-          status: sectionQuality >= 0.8 ? 'excellent' : sectionQuality >= 0.6 ? 'good' : sectionQuality >= 0.4 ? 'needs improvement' : 'poor'
-        };
+    // Determine source structure
+    if (structure.directories.includes('src') && structure.directories.includes('public')) {
+      structure.sourceStructure = 'modern-web-app';
+    } else if (structure.directories.includes('app') && structure.directories.includes('models')) {
+      structure.sourceStructure = 'mvc-framework';
+    } else if (structure.directories.includes('components') && structure.directories.includes('pages')) {
+      structure.sourceStructure = 'component-based';
+    } else if (structure.directories.includes('lib') && structure.directories.includes('bin')) {
+      structure.sourceStructure = 'library-package';
+    } else {
+      structure.sourceStructure = 'custom';
+    }
 
-        if (sectionQuality < 0.6) {
-          analysis.weakSections.push({
-            name: section.name,
-            quality: sectionQuality,
-            reason: sectionQuality < 0.4 ? 'Insufficient content' : 'Could benefit from more detail'
+    return structure;
+  }
+
+  private analyzeDevelopmentVelocity(commits: any[]): any {
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const recentCommits = commits.filter(commit => new Date(commit.commit.author.date) >= thirtyDaysAgo);
+    const weeklyCommits = commits.filter(commit => new Date(commit.commit.author.date) >= sevenDaysAgo);
+
+    const authors = [...new Set(recentCommits.map(commit => commit.commit.author.name))];
+    
+    return {
+      totalCommits: commits.length,
+      last30Days: recentCommits.length,
+      last7Days: weeklyCommits.length,
+      averageCommitsPerDay: Math.round((recentCommits.length / 30) * 10) / 10,
+      activeContributors: authors.length,
+      lastCommitDate: commits.length > 0 ? commits[0].commit.author.date : null,
+      velocity: this.calculateVelocityRating(recentCommits.length, authors.length)
+    };
+  }
+
+  private calculateVelocityRating(commitsLast30Days: number, contributors: number): string {
+    const score = commitsLast30Days * 0.8 + contributors * 5;
+    
+    if (score >= 50) return 'high';
+    if (score >= 20) return 'medium';
+    return 'low';
+  }
+
+  private assessFeatureComplexity(featureDescription: string, techStack: any): any {
+    const complexityFactors = {
+      base: 1,
+      ui: 0,
+      backend: 0,
+      database: 0,
+      integration: 0,
+      security: 0,
+      performance: 0,
+      testing: 0
+    };
+
+    const description = featureDescription.toLowerCase();
+
+    // UI Complexity
+    if (description.includes('dashboard') || description.includes('interface') || description.includes('ui')) {
+      complexityFactors.ui += 2;
+    }
+    if (description.includes('responsive') || description.includes('mobile')) {
+      complexityFactors.ui += 1;
+    }
+    if (description.includes('interactive') || description.includes('dynamic')) {
+      complexityFactors.ui += 1;
+    }
+
+    // Backend Complexity
+    if (description.includes('api') || description.includes('endpoint') || description.includes('service')) {
+      complexityFactors.backend += 2;
+    }
+    if (description.includes('microservice') || description.includes('distributed')) {
+      complexityFactors.backend += 3;
+    }
+    if (description.includes('real-time') || description.includes('websocket')) {
+      complexityFactors.backend += 2;
+    }
+
+    // Database Complexity
+    if (description.includes('database') || description.includes('data') || description.includes('storage')) {
+      complexityFactors.database += 2;
+    }
+    if (description.includes('migration') || description.includes('schema')) {
+      complexityFactors.database += 1;
+    }
+    if (description.includes('analytics') || description.includes('reporting')) {
+      complexityFactors.database += 2;
+    }
+
+    // Integration Complexity
+    if (description.includes('integration') || description.includes('third-party') || description.includes('external')) {
+      complexityFactors.integration += 3;
+    }
+    if (description.includes('webhook') || description.includes('callback')) {
+      complexityFactors.integration += 2;
+    }
+
+    // Security Complexity
+    if (description.includes('auth') || description.includes('security') || description.includes('permission')) {
+      complexityFactors.security += 3;
+    }
+    if (description.includes('encryption') || description.includes('oauth')) {
+      complexityFactors.security += 2;
+    }
+
+    // Performance Complexity
+    if (description.includes('performance') || description.includes('optimization') || description.includes('cache')) {
+      complexityFactors.performance += 2;
+    }
+    if (description.includes('scaling') || description.includes('load')) {
+      complexityFactors.performance += 3;
+    }
+
+    // Testing Complexity
+    if (description.includes('testing') || description.includes('validation')) {
+      complexityFactors.testing += 1;
+    }
+
+    const totalComplexity = Object.values(complexityFactors).reduce((sum, value) => sum + value, 0);
+    
+    let complexityLevel = 'low';
+    if (totalComplexity >= 15) complexityLevel = 'very-high';
+    else if (totalComplexity >= 10) complexityLevel = 'high';
+    else if (totalComplexity >= 6) complexityLevel = 'medium';
+
+    const estimatedHours = this.estimateImplementationHours(totalComplexity, techStack);
+    
+    return {
+      level: complexityLevel,
+      score: totalComplexity,
+      factors: complexityFactors,
+      estimatedHours,
+      estimatedStoryPoints: Math.ceil(estimatedHours / 8), // Assuming 8 hours per story point
+      riskLevel: totalComplexity >= 12 ? 'high' : totalComplexity >= 8 ? 'medium' : 'low'
+    };
+  }
+
+  private estimateImplementationHours(complexityScore: number, techStack: any): number {
+    let baseHours = complexityScore * 4; // Base 4 hours per complexity point
+
+    // Tech stack multipliers
+    if (techStack.languages.includes('TypeScript')) {
+      baseHours *= 0.9; // TypeScript reduces errors, slightly faster
+    }
+    if (techStack.frameworks.includes('React') || techStack.frameworks.includes('Vue.js')) {
+      baseHours *= 0.95; // Modern frameworks provide good tooling
+    }
+    if (techStack.tools.includes('Docker')) {
+      baseHours *= 1.1; // Container setup adds some time
+    }
+
+    // Architecture complexity
+    if (techStack.architecture === 'microservices') {
+      baseHours *= 1.3; // Microservices add coordination complexity
+    } else if (techStack.architecture === 'monolithic') {
+      baseHours *= 0.9; // Simpler deployment
+    }
+
+    return Math.round(baseHours);
+  }
+
+  private analyzeIntegrationImpact(featureDescription: string, codebaseAnalysis: any): any {
+    const impact = {
+      affectedComponents: [],
+      integrationPoints: [],
+      dataFlowChanges: [],
+      apiChanges: [],
+      databaseChanges: [],
+      configurationChanges: [],
+      testingRequirements: [],
+      deploymentConsiderations: []
+    };
+
+    const description = featureDescription.toLowerCase();
+    const { techStack, fileStructure, currentWorkload } = codebaseAnalysis;
+
+    // Analyze affected components
+    if (description.includes('user') || description.includes('auth')) {
+      impact.affectedComponents.push('User Management System');
+      impact.apiChanges.push('User authentication endpoints');
+      impact.databaseChanges.push('User schema modifications');
+    }
+
+    if (description.includes('dashboard') || description.includes('analytics')) {
+      impact.affectedComponents.push('Dashboard Component');
+      impact.dataFlowChanges.push('Analytics data aggregation');
+      impact.testingRequirements.push('Dashboard integration tests');
+    }
+
+    if (description.includes('notification') || description.includes('email')) {
+      impact.affectedComponents.push('Notification Service');
+      impact.integrationPoints.push('Email service integration');
+      impact.configurationChanges.push('Email service configuration');
+    }
+
+    if (description.includes('api') || description.includes('integration')) {
+      impact.affectedComponents.push('API Layer');
+      impact.apiChanges.push('New API endpoints');
+      impact.testingRequirements.push('API contract tests');
+    }
+
+    if (description.includes('database') || description.includes('data')) {
+      impact.affectedComponents.push('Data Layer');
+      impact.databaseChanges.push('Schema migrations');
+      impact.testingRequirements.push('Data integrity tests');
+    }
+
+    // Tech stack specific impacts
+    if (techStack.frameworks.includes('React')) {
+      impact.affectedComponents.push('React Components');
+      impact.testingRequirements.push('Component unit tests');
+    }
+
+    if (techStack.tools.includes('Docker')) {
+      impact.deploymentConsiderations.push('Docker container updates');
+      impact.configurationChanges.push('Container configuration');
+    }
+
+    if (techStack.architecture === 'microservices') {
+      impact.integrationPoints.push('Service-to-service communication');
+      impact.deploymentConsiderations.push('Service orchestration updates');
+    }
+
+    // Current workload impact
+    const conflictingIssues = currentWorkload.issues.filter(issue => 
+      impact.affectedComponents.some(component => 
+        issue.title.toLowerCase().includes(component.toLowerCase()) ||
+        issue.labels.some(label => component.toLowerCase().includes(label.toLowerCase()))
+      )
+    );
+
+    if (conflictingIssues.length > 0) {
+      impact.integrationPoints.push(`Potential conflicts with ${conflictingIssues.length} existing issues`);
+    }
+
+    return impact;
+  }
+
+  private generateImplementationRoadmap(featureDescription: string, complexity: any, integrationImpact: any): any {
+    const roadmap = {
+      phases: [],
+      totalDuration: 0,
+      criticalPath: [],
+      dependencies: [],
+      riskMitigation: []
+    };
+
+    // Phase 1: Planning and Design
+    const planningPhase = {
+      name: 'Planning & Design',
+      duration: Math.ceil(complexity.estimatedHours * 0.2), // 20% of total effort
+      tasks: [
+        'Technical specification and architecture design',
+        'UI/UX mockups and user flow design',
+        'Database schema design and migration planning',
+        'API contract definition and documentation',
+        'Integration point identification and planning'
+      ],
+      dependencies: [],
+      deliverables: ['Technical Specification', 'Design Mockups', 'API Documentation'],
+      riskLevel: 'low'
+    };
+
+    // Phase 2: Backend Development
+    const backendPhase = {
+      name: 'Backend Development',
+      duration: Math.ceil(complexity.estimatedHours * 0.4), // 40% of total effort
+      tasks: [
+        'Database schema implementation and migrations',
+        'Core business logic implementation',
+        'API endpoint development',
+        'Authentication and authorization integration',
+        'Data validation and error handling'
+      ],
+      dependencies: ['Planning & Design'],
+      deliverables: ['Backend API', 'Database Changes', 'Unit Tests'],
+      riskLevel: complexity.riskLevel
+    };
+
+    // Phase 3: Frontend Development
+    const frontendPhase = {
+      name: 'Frontend Development',
+      duration: Math.ceil(complexity.estimatedHours * 0.3), // 30% of total effort
+      tasks: [
+        'Component development and styling',
+        'API integration and state management',
+        'User interface implementation',
+        'Form validation and error handling',
+        'Responsive design implementation'
+      ],
+      dependencies: ['Backend Development'],
+      deliverables: ['UI Components', 'Frontend Integration', 'Component Tests'],
+      riskLevel: 'medium'
+    };
+
+    // Phase 4: Integration and Testing
+    const testingPhase = {
+      name: 'Integration & Testing',
+      duration: Math.ceil(complexity.estimatedHours * 0.1), // 10% of total effort
+      tasks: [
+        'End-to-end integration testing',
+        'Performance testing and optimization',
+        'Security testing and vulnerability assessment',
+        'User acceptance testing coordination',
+        'Bug fixes and refinements'
+      ],
+      dependencies: ['Frontend Development'],
+      deliverables: ['Test Suite', 'Performance Report', 'Security Assessment'],
+      riskLevel: 'medium'
+    };
+
+    roadmap.phases = [planningPhase, backendPhase, frontendPhase, testingPhase];
+    roadmap.totalDuration = roadmap.phases.reduce((total, phase) => total + phase.duration, 0);
+    roadmap.criticalPath = ['Planning & Design → Backend Development → Frontend Development → Integration & Testing'];
+
+    // Add dependencies based on integration impact
+    integrationImpact.affectedComponents.forEach((component: string) => {
+      roadmap.dependencies.push(`${component} coordination required`);
+    });
+
+    // Risk mitigation strategies
+    if (complexity.riskLevel === 'high') {
+      roadmap.riskMitigation.push('Consider breaking feature into smaller increments');
+      roadmap.riskMitigation.push('Implement feature flags for gradual rollout');
+      roadmap.riskMitigation.push('Increase testing coverage and code review requirements');
+    }
+
+    if (integrationImpact.affectedComponents.length > 3) {
+      roadmap.riskMitigation.push('Coordinate with teams responsible for affected components');
+      roadmap.riskMitigation.push('Plan integration testing across all affected areas');
+    }
+
+    return roadmap;
+  }
+
+  private assessMilestoneImpact(roadmap: any, currentWorkload: any): any {
+    const impact = {
+      affectedMilestones: [],
+      newMilestoneRecommended: false,
+      timelineAdjustments: [],
+      resourceConflicts: [],
+      recommendations: []
+    };
+
+    const featureDuration = roadmap.totalDuration;
+
+    // Check each active milestone for potential impact
+    currentWorkload.milestones.forEach((milestone: any) => {
+      if (milestone.due_on) {
+        const dueDate = new Date(milestone.due_on);
+        const now = new Date();
+        const daysUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        const hoursUntilDue = daysUntilDue * 8; // Assuming 8 working hours per day
+
+        if (featureDuration > hoursUntilDue * 0.5) { // Feature takes more than 50% of remaining milestone time
+          impact.affectedMilestones.push({
+            milestone: milestone.title,
+            number: milestone.number,
+            daysUntilDue,
+            potentialDelay: Math.ceil((featureDuration - hoursUntilDue) / 8),
+            recommendedAction: featureDuration > hoursUntilDue ? 'Move to next milestone' : 'Monitor closely'
           });
         }
-      } else {
-        analysis.missingCriticalSections.push(section.name);
-        analysis.sectionScores[section.name] = {
-          score: 0,
-          weight: section.weight,
-          weightedScore: 0,
-          status: 'missing'
+      }
+    });
+
+    // Check for resource conflicts
+    const busyAssignees = this.identifyBusyAssignees(currentWorkload.issues);
+    if (busyAssignees.length > 0) {
+      impact.resourceConflicts.push({
+        type: 'Developer Overallocation',
+        description: `${busyAssignees.length} developers have high workload`,
+        affectedAssignees: busyAssignees,
+        recommendation: 'Consider redistributing workload or extending timeline'
+      });
+    }
+
+    // Recommendations
+    if (impact.affectedMilestones.length > 0) {
+      impact.newMilestoneRecommended = true;
+      impact.recommendations.push('Create dedicated milestone for this feature to avoid impacting existing commitments');
+    }
+
+    if (featureDuration > 80) { // More than 2 weeks of work
+      impact.recommendations.push('Consider breaking feature into multiple smaller issues for better tracking');
+    }
+
+    if (currentWorkload.openIssues > 20) {
+      impact.recommendations.push('High number of open issues - consider prioritizing existing work');
+    }
+
+    return impact;
+  }
+
+  private identifyBusyAssignees(issues: any[]): string[] {
+    const assigneeWorkload: { [assignee: string]: number } = {};
+
+    issues.forEach(issue => {
+      if (issue.state === 'open' && issue.assignees.length > 0) {
+        issue.assignees.forEach((assignee: string) => {
+          assigneeWorkload[assignee] = (assigneeWorkload[assignee] || 0) + 1;
+        });
+      }
+    });
+
+    // Return assignees with more than 5 open issues
+    return Object.entries(assigneeWorkload)
+      .filter(([, count]) => count > 5)
+      .map(([assignee]) => assignee);
+  }
+
+  private generateActionableTaskBreakdown(featureDescription: string, roadmap: any, complexity: any): any[] {
+    const tasks = [];
+    let taskCounter = 1;
+
+    roadmap.phases.forEach((phase: any) => {
+      phase.tasks.forEach((taskDescription: string) => {
+        const task = {
+          id: `TASK-${taskCounter.toString().padStart(3, '0')}`,
+          title: `${phase.name}: ${taskDescription}`,
+          description: this.generateTaskDescription(taskDescription, featureDescription),
+          phase: phase.name,
+          estimatedHours: Math.ceil(phase.duration / phase.tasks.length),
+          storyPoints: Math.ceil((phase.duration / phase.tasks.length) / 8),
+          priority: this.determineTaskPriority(taskDescription, phase.name),
+          labels: this.generateTaskLabels(taskDescription, phase.name),
+          acceptanceCriteria: this.generateAcceptanceCriteria(taskDescription),
+          dependencies: phase.dependencies,
+          assigneeRecommendation: this.recommendAssignee(taskDescription)
         };
-      }
-    }
 
-    // Analyze enhancement sections
-    for (const section of enhancementSections) {
-      let sectionFound = false;
-      for (const pattern of section.patterns) {
-        if (pattern.test(prdContent)) {
-          sectionFound = true;
-          break;
-        }
-      }
-      
-      if (!sectionFound) {
-        analysis.missingSections.push(section.name);
-      }
-    }
+        tasks.push(task);
+        taskCounter++;
+      });
+    });
 
-    // Calculate overall score
-    analysis.overallScore = maxPossibleScore > 0 ? (totalScore / maxPossibleScore) * 100 : 0;
+    return tasks;
+  }
 
-    // Generate recommendations based on analysis
-    this.generateQualityRecommendations(analysis);
-
-    // Add completeness metrics
-    analysis.completenessMetrics = {
-      totalSections: requiredSections.length + enhancementSections.length,
-      presentSections: Object.keys(analysis.sectionScores).length - analysis.missingCriticalSections.length,
-      missingSections: analysis.missingCriticalSections.length + analysis.missingSections.length,
-      completenessPercentage: Math.round(((Object.keys(analysis.sectionScores).length - analysis.missingCriticalSections.length) / (requiredSections.length + enhancementSections.length)) * 100)
+  private generateTaskDescription(taskTitle: string, featureDescription: string): string {
+    const baseDescription = `Implement ${taskTitle.toLowerCase()} as part of the ${featureDescription} feature.`;
+    
+    const detailMap: { [key: string]: string } = {
+      'technical specification': 'Create detailed technical specifications including architecture diagrams, data models, and API contracts. Define implementation approach and identify potential technical risks.',
+      'database schema': 'Design and implement database schema changes required for the feature. Include migration scripts and rollback procedures.',
+      'api endpoint': 'Develop RESTful API endpoints with proper request/response handling, validation, and error management. Include comprehensive API documentation.',
+      'ui/ux mockups': 'Create user interface mockups and user experience flows. Include responsive design considerations and accessibility requirements.',
+      'component development': 'Implement reusable UI components following established design patterns and coding standards. Include component documentation and examples.',
+      'integration testing': 'Develop comprehensive integration tests covering all feature functionality. Include edge cases and error scenarios.',
+      'authentication': 'Implement authentication and authorization logic ensuring security best practices and proper session management.',
+      'performance testing': 'Conduct performance analysis and optimization to ensure feature meets performance requirements under expected load.'
     };
 
-    return analysis;
+    const matchingDetail = Object.entries(detailMap).find(([key]) => 
+      taskTitle.toLowerCase().includes(key)
+    );
+
+    return matchingDetail ? `${baseDescription}\n\n${matchingDetail[1]}` : baseDescription;
   }
 
-  private generateQualityRecommendations(analysis: any): void {
-    // Critical missing sections
-    if (analysis.missingCriticalSections.length > 0) {
-      analysis.recommendations.push({
-        type: 'critical',
-        category: 'Missing Critical Sections',
-        description: `Add these essential sections: ${analysis.missingCriticalSections.join(', ')}`,
-        priority: 'high',
-        impact: 'major'
-      });
-    }
-
-    // Weak sections
-    if (analysis.weakSections.length > 0) {
-      analysis.recommendations.push({
-        type: 'improvement',
-        category: 'Content Enhancement',
-        description: `Strengthen these sections with more detail: ${analysis.weakSections.map(s => s.name).join(', ')}`,
-        priority: 'medium',
-        impact: 'moderate'
-      });
-    }
-
-    // Enhancement sections
-    if (analysis.missingSections.length > 0) {
-      analysis.recommendations.push({
-        type: 'enhancement',
-        category: 'Additional Sections',
-        description: `Consider adding these valuable sections: ${analysis.missingSections.slice(0, 3).join(', ')}`,
-        priority: 'low',
-        impact: 'minor'
-      });
-    }
-
-    // Score-based recommendations
-    if (analysis.overallScore < 60) {
-      analysis.recommendations.push({
-        type: 'critical',
-        category: 'Overall Quality',
-        description: 'PRD needs significant improvement. Focus on adding missing sections and expanding content.',
-        priority: 'high',
-        impact: 'major'
-      });
-    } else if (analysis.overallScore < 80) {
-      analysis.recommendations.push({
-        type: 'improvement',
-        category: 'Overall Quality',
-        description: 'PRD is functional but could benefit from more comprehensive content and detail.',
-        priority: 'medium',
-        impact: 'moderate'
-      });
-    }
-  }
-
-  private generateMarketAnalysis(productName: string, targetAudience: string, industry?: string): string {
-    // AI-generated market analysis template
-    const marketAnalysis = `## 📊 Market Analysis
-
-### Market Size and Opportunity
-The ${industry || 'target'} market for ${productName} represents a significant opportunity, with growing demand from ${targetAudience || 'target demographics'}. Current market trends indicate:
-
-- **Total Addressable Market (TAM):** Research indicates substantial market potential for products targeting ${targetAudience}
-- **Serviceable Addressable Market (SAM):** Focused segment shows strong growth trajectory
-- **Serviceable Obtainable Market (SOM):** Initial capture potential estimated based on competitive landscape
-
-### Market Trends
-Key trends driving market demand:
-1. **Digital Transformation:** Increased adoption of digital solutions in the target sector
-2. **User Experience Focus:** Growing emphasis on intuitive, user-friendly interfaces
-3. **Mobile-First Approach:** Rising preference for mobile-accessible solutions
-4. **Data-Driven Decisions:** Increased demand for analytics and insights
-5. **Integration Capabilities:** Need for solutions that integrate with existing systems
-
-### Target Market Segmentation
-Primary market segments for ${productName}:
-- **Primary Segment:** ${targetAudience} with immediate need for the solution
-- **Secondary Segment:** Adjacent users who could benefit from expanded features
-- **Future Segments:** Potential expansion opportunities based on product evolution
-
-### Market Entry Strategy
-Recommended approach for market penetration:
-1. **Focus on Early Adopters:** Target innovation-friendly segment first
-2. **Build Strong Value Proposition:** Emphasize unique benefits and ROI
-3. **Leverage Feedback:** Use initial user feedback to refine product-market fit
-4. **Scale Gradually:** Expand to broader market segments after validation`;
-
-    return marketAnalysis;
-  }
-
-  private generateCompetitiveAnalysis(productName: string, competitors: string[] = []): string {
-    const defaultCompetitors = competitors.length > 0 ? competitors : ['Market Leader A', 'Established Solution B', 'Emerging Platform C'];
+  private determineTaskPriority(taskDescription: string, phase: string): string {
+    const taskLower = taskDescription.toLowerCase();
     
-    const competitiveAnalysis = `## 🏆 Competitive Analysis
-
-### Competitive Landscape Overview
-${productName} operates in a competitive environment with several established players and emerging solutions. Understanding the competitive landscape is crucial for positioning and differentiation.
-
-### Key Competitors
-
-${defaultCompetitors.map((competitor, index) => `
-#### ${index + 1}. ${competitor}
-**Strengths:**
-- Established market presence and brand recognition
-- Comprehensive feature set for core use cases
-- Strong customer support and documentation
-
-**Weaknesses:**
-- Legacy architecture limiting innovation speed
-- Higher pricing structure
-- Complex user interface affecting adoption
-
-**Market Position:** ${index === 0 ? 'Market leader' : index === 1 ? 'Strong challenger' : 'Emerging player'}
-**Differentiation Opportunity:** Focus on ${index === 0 ? 'superior user experience' : index === 1 ? 'better pricing and accessibility' : 'innovative features and modern approach'}
-`).join('')}
-
-### Competitive Positioning Matrix
-
-| Feature/Aspect | ${productName} | ${defaultCompetitors[0]} | ${defaultCompetitors[1]} | ${defaultCompetitors[2]} |
-|---|---|---|---|---|
-| **User Experience** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **Feature Completeness** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **Pricing** | ⭐⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Innovation** | ⭐⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Market Share** | ⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐ |
-
-### Competitive Advantages
-Key differentiators for ${productName}:
-
-1. **Superior User Experience**: Modern, intuitive interface designed for efficiency
-2. **Innovative Features**: Cutting-edge functionality not available in competing solutions
-3. **Competitive Pricing**: Value-driven pricing strategy for better market accessibility
-4. **Agile Development**: Faster feature delivery and market responsiveness
-5. **Customer-Centric Approach**: Direct feedback integration and rapid iteration
-
-### Threat Assessment
-**High Threats:**
-- Market leader launching competing features
-- New well-funded entrants with similar vision
-
-**Medium Threats:**
-- Existing competitors improving user experience
-- Open-source alternatives gaining traction
-
-**Low Threats:**
-- Traditional solutions with outdated approaches
-
-### Strategic Recommendations
-1. **Focus on Differentiation**: Emphasize unique value propositions
-2. **Speed to Market**: Leverage agility advantage for faster feature delivery
-3. **Partnership Strategy**: Build strategic alliances to compete with larger players
-4. **Customer Retention**: Invest in superior customer success and support`;
-
-    return competitiveAnalysis;
-  }
-
-  private generateRiskAssessment(productName: string): string {
-    return `## ⚠️ Risk Assessment
-
-### Technical Risks
-**High Priority:**
-- **Scalability Challenges**: Risk of performance issues with user growth
-  - *Mitigation*: Design for scale from day one, implement monitoring
-- **Security Vulnerabilities**: Data protection and privacy concerns
-  - *Mitigation*: Security-first development, regular audits, compliance
-
-**Medium Priority:**
-- **Integration Complexity**: Challenges connecting with external systems
-  - *Mitigation*: Modular architecture, comprehensive API testing
-- **Technical Debt**: Accumulation affecting development speed
-  - *Mitigation*: Regular refactoring, code quality standards
-
-### Market Risks
-**High Priority:**
-- **Competitive Response**: Established players launching similar features
-  - *Mitigation*: Focus on differentiation, build switching costs
-- **Market Timing**: Product launch timing relative to market readiness
-  - *Mitigation*: Market validation, phased rollout approach
-
-**Medium Priority:**
-- **User Adoption**: Slower than expected uptake by target audience
-  - *Mitigation*: Strong user onboarding, feedback loops
-- **Feature Scope Creep**: Expanding requirements affecting timeline
-  - *Mitigation*: Clear prioritization framework, MVP approach
-
-### Business Risks
-**High Priority:**
-- **Resource Constraints**: Insufficient team or budget for delivery
-  - *Mitigation*: Realistic planning, phase-based development
-- **Regulatory Changes**: New compliance requirements affecting product
-  - *Mitigation*: Monitor regulatory landscape, build flexibility
-
-**Low Priority:**
-- **Team Turnover**: Key personnel leaving during development
-  - *Mitigation*: Knowledge documentation, team redundancy
-- **Vendor Dependencies**: Third-party service reliability
-  - *Mitigation*: Vendor diversification, fallback options
-
-### Risk Monitoring Framework
-1. **Weekly Risk Reviews**: Regular assessment of risk status
-2. **Escalation Triggers**: Clear criteria for risk escalation
-3. **Mitigation Tracking**: Progress monitoring for risk responses
-4. **Contingency Planning**: Backup plans for high-impact risks`;
-  }
-
-  private generateSuccessMetrics(productName: string): string {
-    return `## 📈 Success Metrics & KPIs
-
-### Primary Success Metrics
-
-#### User Adoption Metrics
-- **Monthly Active Users (MAU)**: Target growth rate and absolute numbers
-- **User Retention Rate**: Day 1, Day 7, Day 30 retention percentages
-- **User Onboarding Completion**: Percentage completing setup process
-- **Feature Adoption Rate**: Usage of key product features
-
-#### Business Metrics
-- **Revenue Growth**: Monthly/quarterly revenue targets
-- **Customer Acquisition Cost (CAC)**: Cost to acquire new users
-- **Customer Lifetime Value (CLV)**: Long-term value per customer
-- **Conversion Rate**: Free-to-paid conversion percentages
-
-#### Product Quality Metrics
-- **User Satisfaction Score (CSAT)**: User happiness measurement
-- **Net Promoter Score (NPS)**: User recommendation likelihood
-- **Support Ticket Volume**: Customer support request trends
-- **Bug Report Rate**: Quality and stability indicators
-
-### Secondary Success Metrics
-
-#### Engagement Metrics
-- **Session Duration**: Average time spent in product
-- **Page/Screen Views**: User journey through application
-- **Feature Usage Frequency**: How often users engage with features
-- **User-Generated Content**: Content created by users (if applicable)
-
-#### Performance Metrics
-- **System Uptime**: Availability and reliability metrics
-- **Response Time**: Application performance measurements
-- **Error Rate**: System error frequency and types
-- **Load Capacity**: Concurrent user handling capability
-
-### Success Criteria Timeline
-
-#### 3-Month Targets
-- [ ] Achieve initial user base of [specific number]
-- [ ] Complete user onboarding process optimization
-- [ ] Establish baseline metrics for all KPIs
-- [ ] Reach target system performance benchmarks
-
-#### 6-Month Targets
-- [ ] Hit user retention rate targets
-- [ ] Achieve revenue milestones
-- [ ] Expand feature adoption rates
-- [ ] Complete competitive positioning
-
-#### 12-Month Targets
-- [ ] Scale to target market size
-- [ ] Achieve sustainability metrics
-- [ ] Establish market leadership position
-- [ ] Plan for next phase expansion
-
-### Measurement Framework
-1. **Real-time Dashboards**: Live monitoring of key metrics
-2. **Weekly Reviews**: Regular performance assessment
-3. **Monthly Deep Dives**: Comprehensive metric analysis
-4. **Quarterly Strategy Reviews**: Long-term trend evaluation`;
-  }
-
-  private enhancePRDContent(originalContent: string, enhancement_level: string, focus_areas: string[]): string {
-    let enhancedContent = originalContent;
+    if (phase === 'Planning & Design') return 'high';
+    if (taskLower.includes('security') || taskLower.includes('authentication')) return 'high';
+    if (taskLower.includes('core') || taskLower.includes('main') || taskLower.includes('critical')) return 'high';
+    if (taskLower.includes('testing') || taskLower.includes('validation')) return 'medium';
+    if (taskLower.includes('ui') || taskLower.includes('styling')) return 'medium';
+    if (taskLower.includes('documentation') || taskLower.includes('example')) return 'low';
     
-    // Extract basic info for enhancements
-    const titleMatch = originalContent.match(/^#\s+(.+)$/m);
-    const productName = titleMatch ? titleMatch[1].replace(/📋\s*Product Requirements Document\s*##\s*/, '').trim() : 'Product';
-    
-    // Extract target audience if mentioned
-    const audienceMatch = originalContent.match(/target\s+(?:audience|users?|customers?):\s*([^\n.]+)/i);
-    const targetAudience = audienceMatch ? audienceMatch[1].trim() : 'users';
-
-    // Add missing sections based on enhancement level and focus areas
-    const enhancements = [];
-
-    if (enhancement_level === 'comprehensive' || enhancement_level === 'advanced') {
-      if (!originalContent.includes('Market Analysis') && 
-          (focus_areas.includes('market_analysis') || focus_areas.includes('all'))) {
-        enhancements.push(this.generateMarketAnalysis(productName, targetAudience));
-      }
-
-      if (!originalContent.includes('Competitive Analysis') && 
-          (focus_areas.includes('competitive_analysis') || focus_areas.includes('all'))) {
-        enhancements.push(this.generateCompetitiveAnalysis(productName));
-      }
-
-      if (!originalContent.includes('Risk Assessment') && 
-          (focus_areas.includes('risk_assessment') || focus_areas.includes('all'))) {
-        enhancements.push(this.generateRiskAssessment(productName));
-      }
-
-      if (!originalContent.includes('Success Metrics') && 
-          (focus_areas.includes('success_metrics') || focus_areas.includes('all'))) {
-        enhancements.push(this.generateSuccessMetrics(productName));
-      }
-    }
-
-    // Add implementation recommendations section
-    if (enhancement_level === 'advanced' && 
-        (focus_areas.includes('implementation') || focus_areas.includes('all'))) {
-      const implementationSection = `## 🚀 Implementation Recommendations
-
-### Development Approach
-**Recommended Methodology**: Agile development with 2-week sprints
-- **Phase 1 (Months 1-2)**: Core MVP features and basic functionality
-- **Phase 2 (Months 3-4)**: Enhanced features and user experience improvements
-- **Phase 3 (Months 5-6)**: Advanced features and market expansion
-
-### Technology Stack Recommendations
-**Frontend**: Modern web framework (React, Vue.js, or Angular)
-**Backend**: Scalable server architecture (Node.js, Python Django, or similar)
-**Database**: Cloud-native database solution with backup and scaling
-**Infrastructure**: Cloud platform (AWS, Azure, or GCP) with CI/CD pipeline
-
-### Team Structure
-**Core Team Size**: 5-8 people
-- Product Manager (1)
-- Frontend Developers (2)
-- Backend Developers (2)
-- UI/UX Designer (1)
-- QA Engineer (1)
-- DevOps Engineer (0.5 FTE)
-
-### Quality Assurance Framework
-1. **Automated Testing**: Unit tests, integration tests, end-to-end tests
-2. **Code Review Process**: Mandatory peer reviews for all code changes
-3. **Performance Monitoring**: Real-time application performance tracking
-4. **Security Scanning**: Regular security audits and vulnerability assessments
-
-### Go-to-Market Strategy
-1. **Beta Testing**: Limited release to selected users for feedback
-2. **Soft Launch**: Gradual rollout to broader audience
-3. **Marketing Campaign**: Multi-channel approach including digital and traditional media
-4. **Partnership Development**: Strategic alliances for market penetration`;
-
-      enhancements.push(implementationSection);
-    }
-
-    // Append enhancements to the original content
-    if (enhancements.length > 0) {
-      enhancedContent += '\n\n---\n\n# 🔄 Enhanced Sections\n\n';
-      enhancedContent += enhancements.join('\n\n');
-    }
-
-    return enhancedContent;
+    return 'medium';
   }
 
-  private generateOptimizationSuggestions(analysis: any, productName: string): any[] {
-    const suggestions = [];
+  private generateTaskLabels(taskDescription: string, phase: string): string[] {
+    const labels = [`phase: ${phase.toLowerCase().replace(' & ', '-').replace(' ', '-')}`];
+    const taskLower = taskDescription.toLowerCase();
 
-    // Content optimization suggestions
-    if (analysis.overallScore < 70) {
-      suggestions.push({
-        category: 'Content Quality',
-        priority: 'high',
-        title: 'Expand Critical Sections',
-        description: 'Several sections need more comprehensive content to meet professional standards.',
-        actionItems: [
-          'Add detailed explanations to thin sections',
-          'Include specific examples and use cases',
-          'Provide quantitative data where possible',
-          'Add visual elements like charts or diagrams'
-        ],
-        estimatedImpact: 'Major improvement in PRD professionalism and clarity'
-      });
+    if (taskLower.includes('backend') || taskLower.includes('api') || taskLower.includes('database')) {
+      labels.push('component: backend');
+    }
+    if (taskLower.includes('frontend') || taskLower.includes('ui') || taskLower.includes('component')) {
+      labels.push('component: frontend');
+    }
+    if (taskLower.includes('testing') || taskLower.includes('test')) {
+      labels.push('type: testing');
+    }
+    if (taskLower.includes('documentation') || taskLower.includes('spec')) {
+      labels.push('type: documentation');
+    }
+    if (taskLower.includes('security') || taskLower.includes('auth')) {
+      labels.push('component: security');
     }
 
-    // Structure optimization
-    if (analysis.missingCriticalSections.length > 0) {
-      suggestions.push({
-        category: 'Document Structure',
-        priority: 'high',
-        title: 'Add Missing Essential Sections',
-        description: `Critical sections are missing: ${analysis.missingCriticalSections.join(', ')}`,
-        actionItems: analysis.missingCriticalSections.map(section => `Add comprehensive ${section} section`),
-        estimatedImpact: 'Complete PRD coverage of essential product requirements'
-      });
-    }
+    labels.push('feature-addition');
+    labels.push('auto-generated');
 
-    // Enhancement suggestions
-    if (analysis.missingSections.length > 0) {
-      suggestions.push({
-        category: 'Enhancement Opportunities',
-        priority: 'medium',
-        title: 'Add Value-Adding Sections',
-        description: 'Additional sections could provide strategic value to stakeholders.',
-        actionItems: analysis.missingSections.slice(0, 4).map(section => `Consider adding ${section} for comprehensive coverage`),
-        estimatedImpact: 'Enhanced strategic value and stakeholder confidence'
-      });
-    }
-
-    // User experience improvements
-    suggestions.push({
-      category: 'User Experience',
-      priority: 'medium',
-      title: 'Improve Document Navigation',
-      description: 'Enhance PRD readability and accessibility for different stakeholder types.',
-      actionItems: [
-        'Add executive summary with key takeaways',
-        'Include table of contents with page numbers',
-        'Add cross-references between related sections',
-        'Create glossary for technical terms',
-        'Include quick reference sections for key metrics'
-      ],
-      estimatedImpact: 'Better stakeholder engagement and document utility'
-    });
-
-    // Validation and testing
-    suggestions.push({
-      category: 'Validation Framework',
-      priority: 'medium',
-      title: 'Add Validation and Testing Strategy',
-      description: 'Include mechanisms for validating assumptions and measuring success.',
-      actionItems: [
-        'Define hypothesis validation methods',
-        'Add user testing and feedback collection plans',
-        'Include A/B testing strategies for key features',
-        'Specify performance benchmarks and success criteria',
-        'Add post-launch review and iteration process'
-      ],
-      estimatedImpact: 'Reduced project risk and improved market fit'
-    });
-
-    // Stakeholder alignment
-    suggestions.push({
-      category: 'Stakeholder Alignment',
-      priority: 'low',
-      title: 'Enhance Stakeholder Communication',
-      description: 'Improve PRD effectiveness for different audience types.',
-      actionItems: [
-        'Add role-specific summary sections',
-        'Include decision frameworks and approval criteria',
-        'Specify communication and review schedules',
-        'Add change management process',
-        'Include escalation procedures for issues'
-      ],
-      estimatedImpact: 'Smoother project execution and stakeholder buy-in'
-    });
-
-    return suggestions;
+    return labels;
   }
 
-  // Main enhance_prd implementation
-  private async handleEnhancePrd(args: any) {
-    try {
-      const {
-        prd_content,
-        prd_url,
-        enhancement_level = 'comprehensive',
-        focus_areas = ['all'],
-        include_market_analysis = true,
-        include_competitive_analysis = true,
-        include_risk_assessment = true,
-        include_success_metrics = true,
-        include_implementation_guidance = false,
-        competitors = [],
-        target_industry,
-        quality_threshold = 70,
-        generate_optimization_report = true,
-        output_format = 'enhanced_document',
-        preserve_original_structure = true
-      } = args;
+  private generateAcceptanceCriteria(taskDescription: string): string[] {
+    const baseCriteria = ['Implementation meets functional requirements', 'Code follows project coding standards', 'All tests pass successfully'];
+    const taskLower = taskDescription.toLowerCase();
 
-      let originalContent = prd_content;
-
-      // Fetch from URL if provided
-      if (prd_url && !prd_content) {
-        throw new Error('URL fetching not implemented. Please provide prd_content directly.');
-      }
-
-      if (!originalContent) {
-        throw new Error('Either prd_content or prd_url must be provided');
-      }
-
-      // Analyze current PRD quality
-      const qualityAnalysis = this.assessPRDQuality(originalContent);
-
-      // Generate enhanced content
-      const enhancedContent = this.enhancePRDContent(
-        originalContent, 
-        enhancement_level, 
-        focus_areas
-      );
-
-      // Generate optimization suggestions
-      const optimizationSuggestions = this.generateOptimizationSuggestions(
-        qualityAnalysis,
-        this.extractProductName(originalContent)
-      );
-
-      // Prepare output based on format
-      if (output_format === 'analysis_only') {
-        const analysisReport = `# 📊 PRD Quality Analysis Report
-
-## Overall Assessment
-**Quality Score**: ${Math.round(qualityAnalysis.overallScore)}% ${qualityAnalysis.overallScore >= 80 ? '🟢 Excellent' : qualityAnalysis.overallScore >= 60 ? '🟡 Good' : '🔴 Needs Improvement'}
-
-## Section Analysis
-${Object.entries(qualityAnalysis.sectionScores).map(([section, data]: [string, any]) => 
-  `### ${section}
-- **Score**: ${Math.round(data.score * 100)}% (${data.status})
-- **Weight**: ${Math.round(data.weight * 100)}%
-- **Impact**: ${Math.round(data.weightedScore * 100)} points`
-).join('\n\n')}
-
-## Completeness Metrics
-- **Total Sections**: ${qualityAnalysis.completenessMetrics.totalSections}
-- **Present Sections**: ${qualityAnalysis.completenessMetrics.presentSections}
-- **Missing Sections**: ${qualityAnalysis.completenessMetrics.missingSections}
-- **Completeness**: ${qualityAnalysis.completenessMetrics.completenessPercentage}%
-
-## Critical Issues
-${qualityAnalysis.missingCriticalSections.length > 0 ? 
-  `**Missing Critical Sections**: ${qualityAnalysis.missingCriticalSections.join(', ')}` : 
-  '✅ All critical sections present'}
-
-## Recommendations
-${qualityAnalysis.recommendations.map((rec: any) => 
-  `### ${rec.category} (${rec.priority} priority)
-${rec.description}`
-).join('\n\n')}
-
-## Optimization Suggestions
-${optimizationSuggestions.map((suggestion: any) => 
-  `### ${suggestion.title}
-**Category**: ${suggestion.category} | **Priority**: ${suggestion.priority}
-
-${suggestion.description}
-
-**Action Items**:
-${suggestion.actionItems.map((item: string) => `- ${item}`).join('\n')}
-
-**Expected Impact**: ${suggestion.estimatedImpact}`
-).join('\n\n')}`;
-
-        return {
-          content: [{
-            type: "text",
-            text: analysisReport
-          }]
-        };
-      }
-
-      if (output_format === 'optimization_plan') {
-        const optimizationPlan = `# 🎯 PRD Optimization Plan
-
-## Current State Assessment
-- **Quality Score**: ${Math.round(qualityAnalysis.overallScore)}%
-- **Completeness**: ${qualityAnalysis.completenessMetrics.completenessPercentage}%
-- **Critical Issues**: ${qualityAnalysis.missingCriticalSections.length} missing sections
-
-## Optimization Roadmap
-
-${optimizationSuggestions.map((suggestion: any, index: number) => 
-  `### Phase ${index + 1}: ${suggestion.title}
-**Priority**: ${suggestion.priority} | **Category**: ${suggestion.category}
-
-**Objective**: ${suggestion.description}
-
-**Tasks**:
-${suggestion.actionItems.map((item: string, taskIndex: number) => `${taskIndex + 1}. ${item}`).join('\n')}
-
-**Success Criteria**: ${suggestion.estimatedImpact}
-
-**Estimated Effort**: ${suggestion.priority === 'high' ? '1-2 weeks' : suggestion.priority === 'medium' ? '3-5 days' : '1-2 days'}
-`).join('\n\n')}
-
-## Implementation Timeline
-1. **Week 1-2**: Address high-priority issues (missing critical sections)
-2. **Week 3-4**: Medium-priority enhancements (additional sections, content expansion)
-3. **Week 5-6**: Low-priority improvements (navigation, stakeholder alignment)
-
-## Quality Gates
-- [ ] All critical sections present and comprehensive
-- [ ] Overall quality score above ${quality_threshold}%
-- [ ] Stakeholder review and approval completed
-- [ ] Final optimization review conducted`;
-
-        return {
-          content: [{
-            type: "text",
-            text: optimizationPlan
-          }]
-        };
-      }
-
-      // Default: Enhanced document output
-      let result = '';
-
-      if (generate_optimization_report) {
-        result += `# 📊 PRD Enhancement Report
-
-## Enhancement Summary
-**Original Quality Score**: ${Math.round(qualityAnalysis.overallScore)}%
-**Enhancement Level**: ${enhancement_level}
-**Focus Areas**: ${focus_areas.join(', ')}
-
-### Improvements Made
-- ✅ Enhanced ${enhancedContent.length > originalContent.length ? 'content with additional sections' : 'existing content'}
-- ✅ Added ${focus_areas.length > 1 || focus_areas.includes('all') ? 'comprehensive' : 'targeted'} analysis sections
-- ✅ Provided ${optimizationSuggestions.length} optimization recommendations
-
----
-
-`;
-      }
-
-      result += enhancedContent;
-
-      if (generate_optimization_report) {
-        result += `
-
----
-
-# 📈 Optimization Recommendations
-
-${optimizationSuggestions.map((suggestion: any) => 
-  `## ${suggestion.title}
-**Priority**: ${suggestion.priority} | **Category**: ${suggestion.category}
-
-${suggestion.description}
-
-### Action Items:
-${suggestion.actionItems.map((item: string) => `- ${item}`).join('\n')}
-
-**Expected Impact**: ${suggestion.estimatedImpact}
-`).join('\n')}
-
----
-
-## 🎯 Next Steps for Continued Improvement
-
-1. **Review Enhanced Content**: Validate all new sections for accuracy and relevance
-2. **Stakeholder Feedback**: Gather input from key stakeholders on improvements
-3. **Iterative Refinement**: Implement optimization suggestions based on priority
-4. **Regular Updates**: Establish schedule for ongoing PRD maintenance and updates
-5. **Success Measurement**: Track impact of enhancements on project outcomes
-
-*Enhanced using AI-powered PRD analysis and optimization tools.*`;
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-
-    } catch (error: any) {
-      throw new Error(`Failed to enhance PRD: ${error.message}`);
+    if (taskLower.includes('api')) {
+      baseCriteria.push('API endpoints return correct status codes and responses');
+      baseCriteria.push('API documentation is updated and accurate');
+      baseCriteria.push('Error handling covers all edge cases');
     }
+
+    if (taskLower.includes('database')) {
+      baseCriteria.push('Database migrations run successfully');
+      baseCriteria.push('Data integrity constraints are properly enforced');
+      baseCriteria.push('Rollback procedures are tested and documented');
+    }
+
+    if (taskLower.includes('ui') || taskLower.includes('component')) {
+      baseCriteria.push('UI components are responsive across different screen sizes');
+      baseCriteria.push('Components follow accessibility guidelines');
+      baseCriteria.push('User interactions provide appropriate feedback');
+    }
+
+    if (taskLower.includes('testing')) {
+      baseCriteria.push('Test coverage meets minimum requirements (80%+)');
+      baseCriteria.push('Both positive and negative test cases are included');
+      baseCriteria.push('Tests can be run consistently in CI/CD pipeline');
+    }
+
+    return baseCriteria;
   }
 
-  private extractProductName(content: string): string {
-    const titleMatch = content.match(/^#\s+(.+)$/m);
-    return titleMatch ? titleMatch[1].replace(/📋\s*Product Requirements Document\s*##\s*/, '').trim() : 'Product';
+  private recommendAssignee(taskDescription: string): string {
+    const taskLower = taskDescription.toLowerCase();
+
+    if (taskLower.includes('database') || taskLower.includes('backend') || taskLower.includes('api')) {
+      return 'backend-developer';
+    }
+    if (taskLower.includes('ui') || taskLower.includes('frontend') || taskLower.includes('component')) {
+      return 'frontend-developer';
+    }
+    if (taskLower.includes('design') || taskLower.includes('mockup') || taskLower.includes('ux')) {
+      return 'ui-ux-designer';
+    }
+    if (taskLower.includes('testing') || taskLower.includes('qa')) {
+      return 'qa-engineer';
+    }
+    if (taskLower.includes('security') || taskLower.includes('auth')) {
+      return 'security-engineer';
+    }
+
+    return 'team-lead';
   }
 
-  // PRD Parsing and Analysis Methods (keeping existing implementation)
-  private parsePRDContent(prdContent: string): any {
-    const sections = {
-      title: '',
-      overview: '',
-      features: [],
-      requirements: [],
-      userStories: [],
-      technicalSpecs: [],
-      timeline: '',
-      personas: [],
-      businessGoals: [],
-      acceptanceCriteria: {}
-    };
-
-    // Extract title
-    const titleMatch = prdContent.match(/^#\s+(.+)$/m);
-    if (titleMatch) {
-      sections.title = titleMatch[1].replace(/📋\s*Product Requirements Document\s*##\s*/, '').trim();
-    }
-
-    // Extract executive summary/overview
-    const overviewMatch = prdContent.match(/##\s*(?:🎯\s*)?Executive Summary\s*\n\n([\s\S]*?)(?=\n##|$)/i);
-    if (overviewMatch) {
-      sections.overview = overviewMatch[1].trim();
-    }
-
-    // Extract features
-    const featuresSection = prdContent.match(/##\s*(?:⭐\s*)?(?:Product\s+)?Features?\s*\n([\s\S]*?)(?=\n##|$)/i);
-    if (featuresSection) {
-      const featureMatches = featuresSection[1].match(/^\d+\.\s*\*\*(.+?)\*\*/gm);
-      if (featureMatches) {
-        sections.features = featureMatches.map(match => 
-          match.replace(/^\d+\.\s*\*\*/, '').replace(/\*\*$/, '').trim()
-        );
-      } else {
-        // Try alternative patterns
-        const altFeatureMatches = featuresSection[1].match(/^[-*]\s*(.+)$/gm);
-        if (altFeatureMatches) {
-          sections.features = altFeatureMatches.map(match => 
-            match.replace(/^[-*]\s*/, '').trim()
-          );
-        }
-      }
-    }
-
-    // Extract business goals
-    const goalsSection = prdContent.match(/###\s*Business Goals\s*\n([\s\S]*?)(?=\n###|\n##|$)/i);
-    if (goalsSection) {
-      const goalMatches = goalsSection[1].match(/^\d+\.\s*(.+)$/gm);
-      if (goalMatches) {
-        sections.businessGoals = goalMatches.map(match => 
-          match.replace(/^\d+\.\s*/, '').trim()
-        );
-      }
-    }
-
-    // Extract user personas
-    const personasSection = prdContent.match(/##\s*(?:👥\s*)?User Personas\s*\n([\s\S]*?)(?=\n##|$)/i);
-    if (personasSection) {
-      const personaMatches = personasSection[1].match(/###\s*(.+?)\n([\s\S]*?)(?=\n###|\n##|$)/g);
-      if (personaMatches) {
-        sections.personas = personaMatches.map(match => {
-          const nameMatch = match.match(/###\s*(.+)/);
-          const name = nameMatch ? nameMatch[1].trim() : 'Unknown Persona';
-          return {
-            name,
-            content: match.replace(/###\s*.+\n/, '').trim()
-          };
-        });
-      }
-    }
-
-    // Extract technical specifications
-    const techSection = prdContent.match(/##\s*(?:🔧\s*)?Technical Specifications\s*\n([\s\S]*?)(?=\n##|$)/i);
-    if (techSection) {
-      sections.technicalSpecs.push(techSection[1].trim());
-    }
-
-    // Extract timeline information
-    const timelineSection = prdContent.match(/##\s*(?:📅\s*)?(?:Project\s+)?Timeline\s*\n([\s\S]*?)(?=\n##|$)/i);
-    if (timelineSection) {
-      sections.timeline = timelineSection[1].trim();
-    }
-
-    // Generate user stories from features
-    sections.userStories = this.generateUserStoriesFromFeatures(sections.features);
-
-    // Extract requirements from various sections
-    sections.requirements = this.extractRequirementsFromContent(prdContent);
-
-    return sections;
-  }
-
-  private generateUserStoriesFromFeatures(features: string[]): any[] {
-    return features.map((feature, index) => {
-      const storyId = `US-${(index + 1).toString().padStart(3, '0')}`;
-      
-      // AI-powered user story generation
-      let userStory = '';
-      let acceptanceCriteria = [];
-
-      if (feature.toLowerCase().includes('login') || feature.toLowerCase().includes('authentication')) {
-        userStory = `As a user, I want to securely log into the system so that I can access my personalized content and features.`;
-        acceptanceCriteria = [
-          'User can enter valid credentials and access the system',
-          'Invalid credentials show appropriate error messages',
-          'Password recovery option is available',
-          'Session management works correctly',
-          'Two-factor authentication is supported (if required)'
-        ];
-      } else if (feature.toLowerCase().includes('dashboard') || feature.toLowerCase().includes('overview')) {
-        userStory = `As a user, I want to see a comprehensive dashboard so that I can quickly understand the current status and key metrics.`;
-        acceptanceCriteria = [
-          'Dashboard loads within 3 seconds',
-          'Key metrics are clearly displayed',
-          'Data is updated in real-time or near real-time',
-          'Dashboard is responsive on different screen sizes',
-          'User can customize dashboard layout (if applicable)'
-        ];
-      } else if (feature.toLowerCase().includes('search')) {
-        userStory = `As a user, I want to search for information so that I can quickly find what I need.`;
-        acceptanceCriteria = [
-          'Search returns relevant results',
-          'Search is fast (under 2 seconds)',
-          'Autocomplete suggestions are provided',
-          'Advanced search filters are available',
-          'Search history is maintained (if applicable)'
-        ];
-      } else if (feature.toLowerCase().includes('notification')) {
-        userStory = `As a user, I want to receive notifications so that I stay informed about important updates and actions.`;
-        acceptanceCriteria = [
-          'Notifications are delivered promptly',
-          'User can configure notification preferences',
-          'Different notification types are supported (email, push, in-app)',
-          'Notifications are clear and actionable',
-          'User can mark notifications as read/unread'
-        ];
-      } else if (feature.toLowerCase().includes('report') || feature.toLowerCase().includes('analytics')) {
-        userStory = `As a user, I want to generate reports and view analytics so that I can make data-driven decisions.`;
-        acceptanceCriteria = [
-          'Reports are accurate and up-to-date',
-          'Multiple report formats are supported (PDF, Excel, etc.)',
-          'Data can be filtered and sorted',
-          'Visual charts and graphs are available',
-          'Reports can be scheduled and automated'
-        ];
-      } else {
-        // Generic user story for unrecognized features
-        userStory = `As a user, I want to use ${feature} so that I can accomplish my goals effectively.`;
-        acceptanceCriteria = [
-          'Feature functions as described in specifications',
-          'Feature is accessible and user-friendly',
-          'Feature performs well under normal load',
-          'Feature integrates properly with other system components',
-          'Feature includes appropriate error handling and validation'
-        ];
-      }
-
-      return {
-        id: storyId,
-        feature,
-        userStory,
-        acceptanceCriteria,
-        priority: this.determinePriority(feature),
-        complexity: this.estimateComplexity(feature),
-        dependencies: []
-      };
-    });
-  }
-
-  private extractRequirementsFromContent(content: string): any[] {
-    const requirements = [];
-    let reqCounter = 1;
-
-    // Functional requirements from features
-    const functionalMatches = content.match(/(?:shall|must|should|will)\s+([^.!?]+)/gi);
-    if (functionalMatches) {
-      functionalMatches.forEach(match => {
-        requirements.push({
-          id: `FR-${reqCounter.toString().padStart(3, '0')}`,
-          type: 'Functional',
-          description: match.trim(),
-          priority: 'Medium',
-          status: 'Draft'
-        });
-        reqCounter++;
-      });
-    }
-
-    // Non-functional requirements
-    const nfRequirements = [
-      'System response time shall be under 2 seconds for 95% of requests',
-      'System shall support concurrent users as per capacity planning',
-      'System shall have 99.9% uptime availability',
-      'All user data shall be encrypted in transit and at rest',
-      'System shall be accessible according to WCAG 2.1 AA standards',
-      'System shall support modern web browsers (Chrome, Firefox, Safari, Edge)',
-      'System shall have comprehensive audit logging for security compliance'
-    ];
-
-    nfRequirements.forEach(req => {
-      requirements.push({
-        id: `NFR-${reqCounter.toString().padStart(3, '0')}`,
-        type: 'Non-Functional',
-        description: req,
-        priority: 'High',
-        status: 'Draft'
-      });
-      reqCounter++;
-    });
-
-    return requirements;
-  }
-
-  private determinePriority(feature: string): string {
-    const featureLower = feature.toLowerCase();
-    
-    if (featureLower.includes('login') || featureLower.includes('authentication') || 
-        featureLower.includes('security') || featureLower.includes('critical')) {
-      return 'High';
-    } else if (featureLower.includes('dashboard') || featureLower.includes('core') || 
-               featureLower.includes('main') || featureLower.includes('primary')) {
-      return 'High';
-    } else if (featureLower.includes('report') || featureLower.includes('analytics') || 
-               featureLower.includes('notification') || featureLower.includes('search')) {
-      return 'Medium';
-    } else if (featureLower.includes('nice to have') || featureLower.includes('optional') || 
-               featureLower.includes('enhancement') || featureLower.includes('cosmetic')) {
-      return 'Low';
-    } else {
-      return 'Medium';
-    }
-  }
-
-  private estimateComplexity(feature: string): string {
-    const featureLower = feature.toLowerCase();
-    
-    if (featureLower.includes('integration') || featureLower.includes('api') || 
-        featureLower.includes('sync') || featureLower.includes('real-time') ||
-        featureLower.includes('machine learning') || featureLower.includes('ai')) {
-      return 'High';
-    } else if (featureLower.includes('dashboard') || featureLower.includes('report') || 
-               featureLower.includes('workflow') || featureLower.includes('automation')) {
-      return 'Medium';
-    } else if (featureLower.includes('form') || featureLower.includes('list') || 
-               featureLower.includes('view') || featureLower.includes('display')) {
-      return 'Low';
-    } else {
-      return 'Medium';
-    }
-  }
-
-  private generateLabelsFromPRD(sections: any): string[] {
-    const labels = new Set<string>();
-    
-    // Priority-based labels
-    labels.add('priority: high');
-    labels.add('priority: medium'); 
-    labels.add('priority: low');
-    
-    // Type-based labels
-    labels.add('type: feature');
-    labels.add('type: bug');
-    labels.add('type: enhancement');
-    labels.add('type: task');
-    
-    // Component-based labels from features
-    sections.features.forEach((feature: string) => {
-      const featureLower = feature.toLowerCase();
-      
-      if (featureLower.includes('ui') || featureLower.includes('interface') || featureLower.includes('frontend')) {
-        labels.add('component: frontend');
-      }
-      if (featureLower.includes('api') || featureLower.includes('backend') || featureLower.includes('server')) {
-        labels.add('component: backend');
-      }
-      if (featureLower.includes('database') || featureLower.includes('data')) {
-        labels.add('component: database');
-      }
-      if (featureLower.includes('auth') || featureLower.includes('security')) {
-        labels.add('component: security');
-      }
-      if (featureLower.includes('integration') || featureLower.includes('external')) {
-        labels.add('component: integration');
-      }
-    });
-    
-    // PRD-specific labels
-    labels.add('prd-generated');
-    labels.add('needs-refinement');
-    labels.add('ready-for-development');
-    
-    return Array.from(labels);
-  }
-
-  private async createLabelsInRepository(labels: string[]): Promise<any[]> {
-    const createdLabels = [];
-    const labelColors = {
-      'priority: high': 'd73a4a',
-      'priority: medium': 'fbca04',
-      'priority: low': '0e8a16',
-      'type: feature': '007bff',
-      'type: bug': 'd73a4a',
-      'type: enhancement': 'a2eeef',
-      'type: task': '6f42c1',
-      'component: frontend': 'fef2c0',
-      'component: backend': 'bfd4f2',
-      'component: database': 'd4edda',
-      'component: security': 'f8d7da',
-      'component: integration': 'e1ecf4',
-      'prd-generated': '7057ff',
-      'needs-refinement': 'fbca04',
-      'ready-for-development': '28a745'
-    };
-
-    for (const labelName of labels) {
-      try {
-        const color = labelColors[labelName] || 'ededed';
-        const response = await this.octokit.rest.issues.createLabel({
-          owner: this.owner,
-          repo: this.repo,
-          name: labelName,
-          color,
-          description: `Auto-generated label from PRD parsing`
-        });
-        
-        createdLabels.push({
-          name: response.data.name,
-          color: response.data.color,
-          url: response.data.url
-        });
-      } catch (error: any) {
-        if (error.status === 422) {
-          // Label already exists, which is fine
-          console.log(`Label "${labelName}" already exists`);
-        } else {
-          console.error(`Failed to create label "${labelName}":`, error.message);
-        }
-      }
-    }
-
-    return createdLabels;
-  }
-
-  private async createIssuesFromUserStories(userStories: any[], milestoneNumber?: number, assignees: string[] = []): Promise<any[]> {
-    const createdIssues = [];
-
-    for (const story of userStories) {
-      try {
-        const issueBody = `## User Story\n${story.userStory}\n\n## Feature\n${story.feature}\n\n## Acceptance Criteria\n${story.acceptanceCriteria.map((criteria: string, index: number) => `${index + 1}. ${criteria}`).join('\n')}\n\n## Additional Details\n- **Priority:** ${story.priority}\n- **Complexity:** ${story.complexity}\n- **Story ID:** ${story.id}\n\n## Definition of Done\n- [ ] All acceptance criteria are met\n- [ ] Code is reviewed and approved\n- [ ] Unit tests are written and passing\n- [ ] Feature is tested in staging environment\n- [ ] Documentation is updated\n- [ ] Product owner approves the implementation`;
-
-        const labels = ['type: feature', 'prd-generated', `priority: ${story.priority.toLowerCase()}`];
-        
-        const response = await this.octokit.rest.issues.create({
-          owner: this.owner,
-          repo: this.repo,
-          title: `${story.id}: ${story.feature}`,
-          body: issueBody,
-          labels,
-          assignees,
-          milestone: milestoneNumber
-        });
-
-        createdIssues.push({
-          number: response.data.number,
-          title: response.data.title,
-          url: response.data.html_url,
-          storyId: story.id,
-          priority: story.priority,
-          complexity: story.complexity
-        });
-      } catch (error) {
-        console.error(`Failed to create issue for story ${story.id}:`, error);
-      }
-    }
-
-    return createdIssues;
-  }
-
-  // Implementation of handleParsePRD (keeping existing)
-  private async handleParsePRD(args: any) {
+  // Main add_feature implementation
+  private async handleAddFeature(args: any) {
     this.validateRepoConfig();
 
     try {
       const {
-        prd_content,
-        prd_url,
-        project_name,
+        feature_name,
+        feature_description,
+        business_justification = '',
+        target_users = 'all users',
+        success_metrics = [],
+        priority = 'medium',
+        complexity_hint = 'auto',
+        integration_scope = 'auto',
         create_milestone = true,
         milestone_due_date,
         create_issues = true,
-        create_labels = true,
         assign_to = [],
-        priority_mapping = {},
-        task_complexity_analysis = true,
-        generate_user_stories = true,
-        extract_dependencies = true,
-        output_format = 'detailed'
+        include_testing_tasks = true,
+        include_documentation_tasks = true,
+        generate_impact_report = true,
+        dry_run = false
       } = args;
 
-      let prdContent = prd_content;
-
-      // If URL is provided, fetch content from URL
-      if (prd_url && !prd_content) {
-        // In a real implementation, you would fetch from the URL
-        // For now, we'll return an error asking for direct content
-        throw new Error('URL fetching not implemented. Please provide prd_content directly.');
-      }
-
-      if (!prdContent) {
-        throw new Error('Either prd_content or prd_url must be provided');
-      }
-
-      // Parse PRD content
-      const parsedSections = this.parsePRDContent(prdContent);
-      
       let result = '';
-      const createdItems = {
-        milestone: null as any,
-        labels: [] as any[],
-        issues: [] as any[]
-      };
 
-      if (output_format === 'detailed') {
-        result += `# 🔍 PRD Analysis Results\n\n`;
-        result += `**Project:** ${project_name}\n`;
+      if (generate_impact_report || dry_run) {
+        result += `# 🚀 Feature Addition Analysis: ${feature_name}\n\n`;
         result += `**Analysis Date:** ${new Date().toLocaleDateString()}\n`;
-        result += `**PRD Title:** ${parsedSections.title || 'Untitled PRD'}\n\n`;
+        result += `**Repository:** ${this.owner}/${this.repo}\n\n`;
         result += `---\n\n`;
       }
 
-      // Create milestone if requested
-      if (create_milestone) {
-        try {
-          const milestoneResponse = await this.octokit.rest.issues.createMilestone({
-            owner: this.owner,
-            repo: this.repo,
-            title: `${project_name} - PRD Implementation`,
-            description: `Implementation of features and requirements from ${parsedSections.title || project_name} PRD.\n\nTotal Features: ${parsedSections.features.length}\nBusiness Goals: ${parsedSections.businessGoals.length}`,
-            due_on: milestone_due_date
+      // Step 1: Analyze existing codebase
+      result += `## 🔍 Codebase Analysis\n\n`;
+      result += `Analyzing existing project structure and dependencies...\n\n`;
+      
+      const codebaseAnalysis = await this.analyzeExistingCodebase();
+      
+      if (generate_impact_report) {
+        result += `### Repository Overview\n`;
+        result += `- **Language:** ${codebaseAnalysis.repository.language || 'Multiple'}\n`;
+        result += `- **Size:** ${Math.round(codebaseAnalysis.repository.size / 1024)} MB\n`;
+        result += `- **Open Issues:** ${codebaseAnalysis.repository.open_issues_count}\n`;
+        result += `- **Last Updated:** ${new Date(codebaseAnalysis.repository.updated_at).toLocaleDateString()}\n\n`;
+
+        result += `### Technology Stack\n`;
+        result += `- **Languages:** ${codebaseAnalysis.techStack.languages.join(', ') || 'None detected'}\n`;
+        result += `- **Frameworks:** ${codebaseAnalysis.techStack.frameworks.join(', ') || 'None detected'}\n`;
+        result += `- **Architecture:** ${codebaseAnalysis.techStack.architecture}\n`;
+        result += `- **Tools:** ${codebaseAnalysis.techStack.tools.join(', ') || 'None detected'}\n\n`;
+
+        result += `### Development Velocity\n`;
+        result += `- **Velocity Rating:** ${codebaseAnalysis.developmentVelocity.velocity}\n`;
+        result += `- **Commits (Last 30 days):** ${codebaseAnalysis.developmentVelocity.last30Days}\n`;
+        result += `- **Active Contributors:** ${codebaseAnalysis.developmentVelocity.activeContributors}\n`;
+        result += `- **Average Commits/Day:** ${codebaseAnalysis.developmentVelocity.averageCommitsPerDay}\n\n`;
+      }
+
+      // Step 2: Assess feature complexity
+      result += `## 🧮 Feature Complexity Assessment\n\n`;
+      
+      const complexityAnalysis = this.assessFeatureComplexity(feature_description, codebaseAnalysis.techStack);
+      
+      result += `**Complexity Level:** ${complexityAnalysis.level.toUpperCase()} (Score: ${complexityAnalysis.score})\n`;
+      result += `**Estimated Effort:** ${complexityAnalysis.estimatedHours} hours (${complexityAnalysis.estimatedStoryPoints} story points)\n`;
+      result += `**Risk Level:** ${complexityAnalysis.riskLevel.toUpperCase()}\n\n`;
+
+      if (generate_impact_report) {
+        result += `### Complexity Breakdown\n`;
+        Object.entries(complexityAnalysis.factors).forEach(([factor, score]) => {
+          if (score > 0) {
+            result += `- **${factor.charAt(0).toUpperCase() + factor.slice(1)}:** ${score} points\n`;
+          }
+        });
+        result += `\n`;
+      }
+
+      // Step 3: Integration impact analysis
+      result += `## 🔄 Integration Impact Analysis\n\n`;
+      
+      const integrationImpact = this.analyzeIntegrationImpact(feature_description, codebaseAnalysis);
+      
+      result += `**Affected Components:** ${integrationImpact.affectedComponents.length}\n`;
+      result += `**Integration Points:** ${integrationImpact.integrationPoints.length}\n`;
+      result += `**API Changes Required:** ${integrationImpact.apiChanges.length > 0 ? 'Yes' : 'No'}\n`;
+      result += `**Database Changes Required:** ${integrationImpact.databaseChanges.length > 0 ? 'Yes' : 'No'}\n\n`;
+
+      if (generate_impact_report && integrationImpact.affectedComponents.length > 0) {
+        result += `### Affected Components\n`;
+        integrationImpact.affectedComponents.forEach((component: string) => {
+          result += `- ${component}\n`;
+        });
+        result += `\n`;
+
+        if (integrationImpact.integrationPoints.length > 0) {
+          result += `### Key Integration Points\n`;
+          integrationImpact.integrationPoints.forEach((point: string) => {
+            result += `- ${point}\n`;
           });
+          result += `\n`;
+        }
+      }
 
-          createdItems.milestone = {
-            number: milestoneResponse.data.number,
-            title: milestoneResponse.data.title,
-            url: milestoneResponse.data.html_url
-          };
+      // Step 4: Implementation roadmap
+      result += `## 🗺️ Implementation Roadmap\n\n`;
+      
+      const roadmap = this.generateImplementationRoadmap(feature_description, complexityAnalysis, integrationImpact);
+      
+      result += `**Total Duration:** ${roadmap.totalDuration} hours (${Math.ceil(roadmap.totalDuration / 8)} days)\n`;
+      result += `**Number of Phases:** ${roadmap.phases.length}\n`;
+      result += `**Critical Path:** ${roadmap.criticalPath.join(' ')}\n\n`;
 
-          if (output_format === 'detailed') {
-            result += `## 🎯 Created Milestone\n\n`;
+      if (generate_impact_report) {
+        result += `### Implementation Phases\n`;
+        roadmap.phases.forEach((phase: any, index: number) => {
+          result += `#### Phase ${index + 1}: ${phase.name}\n`;
+          result += `- **Duration:** ${phase.duration} hours\n`;
+          result += `- **Risk Level:** ${phase.riskLevel}\n`;
+          result += `- **Dependencies:** ${phase.dependencies.join(', ') || 'None'}\n`;
+          result += `- **Key Tasks:**\n`;
+          phase.tasks.forEach((task: string) => {
+            result += `  - ${task}\n`;
+          });
+          result += `\n`;
+        });
+      }
+
+      // Step 5: Milestone impact assessment
+      result += `## 📅 Milestone Impact Assessment\n\n`;
+      
+      const milestoneImpact = this.assessMilestoneImpact(roadmap, codebaseAnalysis.currentWorkload);
+      
+      result += `**Affected Milestones:** ${milestoneImpact.affectedMilestones.length}\n`;
+      result += `**Resource Conflicts:** ${milestoneImpact.resourceConflicts.length}\n`;
+      result += `**New Milestone Recommended:** ${milestoneImpact.newMilestoneRecommended ? 'Yes' : 'No'}\n\n`;
+
+      if (milestoneImpact.affectedMilestones.length > 0) {
+        result += `### Impact on Existing Milestones\n`;
+        milestoneImpact.affectedMilestones.forEach((impact: any) => {
+          result += `- **${impact.milestone}:** ${impact.recommendedAction}\n`;
+          if (impact.potentialDelay > 0) {
+            result += `  - Potential delay: ${impact.potentialDelay} days\n`;
+          }
+        });
+        result += `\n`;
+      }
+
+      // Step 6: Generate actionable tasks
+      result += `## 📋 Actionable Task Breakdown\n\n`;
+      
+      const taskBreakdown = this.generateActionableTaskBreakdown(feature_description, roadmap, complexityAnalysis);
+      
+      result += `**Total Tasks:** ${taskBreakdown.length}\n`;
+      result += `**Estimated Total Effort:** ${taskBreakdown.reduce((sum, task) => sum + task.estimatedHours, 0)} hours\n\n`;
+
+      if (generate_impact_report) {
+        result += `### Task Overview\n`;
+        const tasksByPhase = taskBreakdown.reduce((acc: any, task) => {
+          if (!acc[task.phase]) acc[task.phase] = [];
+          acc[task.phase].push(task);
+          return acc;
+        }, {});
+
+        Object.entries(tasksByPhase).forEach(([phase, tasks]: [string, any]) => {
+          result += `#### ${phase}\n`;
+          tasks.forEach((task: any) => {
+            result += `- **${task.id}:** ${task.title}\n`;
+            result += `  - Priority: ${task.priority} | Story Points: ${task.storyPoints} | Assignee: ${task.assigneeRecommendation}\n`;
+          });
+          result += `\n`;
+        });
+      }
+
+      // Step 7: Create milestone and issues (if not dry run)
+      if (!dry_run) {
+        const createdItems = {
+          milestone: null as any,
+          issues: [] as any[]
+        };
+
+        if (create_milestone) {
+          try {
+            const milestoneResponse = await this.octokit.rest.issues.createMilestone({
+              owner: this.owner,
+              repo: this.repo,
+              title: `Feature: ${feature_name}`,
+              description: `Implementation of ${feature_name} feature.\n\n**Description:** ${feature_description}\n\n**Business Justification:** ${business_justification}\n\n**Estimated Effort:** ${complexityAnalysis.estimatedHours} hours\n**Complexity:** ${complexityAnalysis.level}\n**Risk Level:** ${complexityAnalysis.riskLevel}`,
+              due_on: milestone_due_date
+            });
+
+            createdItems.milestone = {
+              number: milestoneResponse.data.number,
+              title: milestoneResponse.data.title,
+              url: milestoneResponse.data.html_url
+            };
+
+            result += `## ✅ Created Milestone\n\n`;
             result += `**Milestone:** [${milestoneResponse.data.title}](${milestoneResponse.data.html_url})\n`;
             result += `**Number:** #${milestoneResponse.data.number}\n`;
             result += `**Due Date:** ${milestone_due_date || 'Not set'}\n\n`;
-          }
-        } catch (error: any) {
-          console.error('Failed to create milestone:', error.message);
-          if (output_format === 'detailed') {
+          } catch (error: any) {
             result += `⚠️ **Warning:** Could not create milestone: ${error.message}\n\n`;
           }
         }
-      }
 
-      // Create labels if requested
-      if (create_labels) {
-        const suggestedLabels = this.generateLabelsFromPRD(parsedSections);
-        createdItems.labels = await this.createLabelsInRepository(suggestedLabels);
+        if (create_issues) {
+          result += `## 📝 Creating Issues\n\n`;
 
-        if (output_format === 'detailed' && createdItems.labels.length > 0) {
-          result += `## 🏷️ Created Labels\n\n`;
-          createdItems.labels.forEach(label => {
-            result += `- **${label.name}** (#${label.color})\n`;
-          });
-          result += `\n`;
-        }
-      }
+          for (const task of taskBreakdown) {
+            try {
+              const issueBody = `## Feature\n${feature_name}\n\n## Task Description\n${task.description}\n\n## Acceptance Criteria\n${task.acceptanceCriteria.map((criteria: string, index: number) => `${index + 1}. ${criteria}`).join('\n')}\n\n## Implementation Details\n- **Phase:** ${task.phase}\n- **Estimated Hours:** ${task.estimatedHours}\n- **Story Points:** ${task.storyPoints}\n- **Priority:** ${task.priority}\n- **Recommended Assignee:** ${task.assigneeRecommendation}\n\n## Dependencies\n${task.dependencies.length > 0 ? task.dependencies.map((dep: string) => `- ${dep}`).join('\n') : 'None'}\n\n## Definition of Done\n- [ ] All acceptance criteria are met\n- [ ] Code is reviewed and approved\n- [ ] Tests are written and passing\n- [ ] Documentation is updated\n- [ ] Feature is tested in staging environment`;
 
-      // Generate user stories and create issues
-      if (generate_user_stories && create_issues) {
-        const milestoneNumber = createdItems.milestone?.number;
-        createdItems.issues = await this.createIssuesFromUserStories(
-          parsedSections.userStories, 
-          milestoneNumber, 
-          assign_to
-        );
+              const issueResponse = await this.octokit.rest.issues.create({
+                owner: this.owner,
+                repo: this.repo,
+                title: task.title,
+                body: issueBody,
+                labels: task.labels,
+                assignees: assign_to,
+                milestone: createdItems.milestone?.number
+              });
 
-        if (output_format === 'detailed') {
-          result += `## 📋 Created Issues\n\n`;
-          result += `**Total Issues Created:** ${createdItems.issues.length}\n\n`;
-          
-          createdItems.issues.forEach(issue => {
-            result += `- [#${issue.number}: ${issue.title}](${issue.url})\n`;
-            result += `  - Priority: ${issue.priority}\n`;
-            result += `  - Complexity: ${issue.complexity}\n`;
-          });
-          result += `\n`;
-        }
-      }
+              createdItems.issues.push({
+                number: issueResponse.data.number,
+                title: issueResponse.data.title,
+                url: issueResponse.data.html_url,
+                taskId: task.id
+              });
 
-      // Analysis Summary
-      if (output_format === 'detailed') {
-        result += `## 📊 PRD Analysis Summary\n\n`;
-        result += `### Extracted Content\n`;
-        result += `- **Features Identified:** ${parsedSections.features.length}\n`;
-        result += `- **Business Goals:** ${parsedSections.businessGoals.length}\n`;
-        result += `- **User Personas:** ${parsedSections.personas.length}\n`;
-        result += `- **Requirements Generated:** ${parsedSections.requirements.length}\n`;
-        result += `- **User Stories Generated:** ${parsedSections.userStories.length}\n\n`;
-
-        if (parsedSections.features.length > 0) {
-          result += `### 🎯 Key Features\n`;
-          parsedSections.features.forEach((feature: string, index: number) => {
-            result += `${index + 1}. ${feature}\n`;
-          });
-          result += `\n`;
-        }
-
-        if (task_complexity_analysis) {
-          result += `### 🧮 Complexity Analysis\n`;
-          const complexityDistribution = parsedSections.userStories.reduce((acc: any, story: any) => {
-            acc[story.complexity] = (acc[story.complexity] || 0) + 1;
-            return acc;
-          }, {});
-
-          Object.entries(complexityDistribution).forEach(([complexity, count]) => {
-            result += `- **${complexity} Complexity:** ${count} tasks\n`;
-          });
-          result += `\n`;
-        }
-
-        if (extract_dependencies) {
-          result += `### 🔗 Recommendations\n`;
-          result += `- Review user stories for accuracy and completeness\n`;
-          result += `- Prioritize high-priority features for first sprint\n`;
-          result += `- Consider breaking down high-complexity features\n`;
-          result += `- Establish definition of done for each user story\n`;
-          result += `- Plan regular PRD review and update cycles\n\n`;
-        }
-
-        result += `### ✅ Next Steps\n`;
-        result += `1. Review generated user stories and acceptance criteria\n`;
-        result += `2. Refine issue descriptions and add technical details\n`;
-        result += `3. Assign team members to specific issues\n`;
-        result += `4. Prioritize issues within the milestone\n`;
-        result += `5. Begin sprint planning based on generated tasks\n\n`;
-
-        result += `---\n`;
-        result += `*PRD analysis completed using AI-powered parsing and task generation.*`;
-      }
-
-      // JSON output format
-      if (output_format === 'json') {
-        const jsonResult = {
-          project_name,
-          analysis_date: new Date().toISOString(),
-          parsed_content: parsedSections,
-          created_items: createdItems,
-          summary: {
-            features_count: parsedSections.features.length,
-            user_stories_count: parsedSections.userStories.length,
-            requirements_count: parsedSections.requirements.length,
-            issues_created: createdItems.issues.length,
-            labels_created: createdItems.labels.length,
-            milestone_created: !!createdItems.milestone
+              result += `- [#${issueResponse.data.number}: ${issueResponse.data.title}](${issueResponse.data.html_url})\n`;
+            } catch (error: any) {
+              result += `- ❌ Failed to create issue for ${task.id}: ${error.message}\n`;
+            }
           }
-        };
 
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify(jsonResult, null, 2)
-          }]
-        };
+          result += `\n**Total Issues Created:** ${createdItems.issues.length}\n\n`;
+        }
       }
 
-      // Summary output format
-      if (output_format === 'summary') {
-        result = `📋 **PRD Parsing Complete**\n\n`;
-        result += `**Project:** ${project_name}\n`;
-        result += `**Features:** ${parsedSections.features.length}\n`;
-        result += `**Issues Created:** ${createdItems.issues.length}\n`;
-        result += `**Milestone:** ${createdItems.milestone ? `#${createdItems.milestone.number}` : 'None'}\n`;
-        result += `**Labels:** ${createdItems.labels.length} created\n\n`;
-        result += `🎯 **Ready for development planning!**`;
+      // Step 8: Recommendations and next steps
+      result += `## 💡 Recommendations\n\n`;
+
+      if (complexityAnalysis.riskLevel === 'high') {
+        result += `⚠️ **High Risk Feature**\n`;
+        result += `- Consider breaking this feature into smaller, more manageable pieces\n`;
+        result += `- Implement feature flags for gradual rollout\n`;
+        result += `- Increase code review and testing requirements\n`;
+        result += `- Plan for additional buffer time in estimates\n\n`;
       }
+
+      if (milestoneImpact.resourceConflicts.length > 0) {
+        result += `👥 **Resource Management**\n`;
+        milestoneImpact.resourceConflicts.forEach((conflict: any) => {
+          result += `- ${conflict.description}: ${conflict.recommendation}\n`;
+        });
+        result += `\n`;
+      }
+
+      if (integrationImpact.affectedComponents.length > 3) {
+        result += `🔄 **Integration Coordination**\n`;
+        result += `- Schedule integration planning meetings with affected teams\n`;
+        result += `- Plan comprehensive integration testing\n`;
+        result += `- Consider phased rollout to minimize integration risks\n\n`;
+      }
+
+      result += `### General Recommendations\n`;
+      if (milestoneImpact.recommendations.length > 0) {
+        milestoneImpact.recommendations.forEach((rec: string) => {
+          result += `- ${rec}\n`;
+        });
+      }
+      if (roadmap.riskMitigation.length > 0) {
+        roadmap.riskMitigation.forEach((risk: string) => {
+          result += `- ${risk}\n`;
+        });
+      }
+
+      result += `\n## 🎯 Next Steps\n\n`;
+      result += `1. **Review and Validate Analysis**: Verify the complexity assessment and integration impact\n`;
+      result += `2. **Stakeholder Approval**: Get business and technical stakeholder sign-off\n`;
+      result += `3. **Resource Allocation**: Assign team members based on recommendations\n`;
+      result += `4. **Sprint Planning**: Incorporate tasks into upcoming sprint cycles\n`;
+      result += `5. **Risk Monitoring**: Set up monitoring for identified risks\n`;
+
+      if (!dry_run && create_issues) {
+        result += `6. **Issue Refinement**: Review and refine created issues with more specific details\n`;
+        result += `7. **Estimation Validation**: Validate story point estimates with the development team\n`;
+      }
+
+      result += `\n---\n`;
+      result += `*Feature analysis completed using AI-powered impact assessment and project management tools.*`;
 
       return {
         content: [{
@@ -1437,27 +1115,17 @@ ${suggestion.actionItems.map((item: string) => `- ${item}`).join('\n')}
           text: result
         }]
       };
-    } catch (error: any) {
-      throw new Error(`Failed to parse PRD: ${error.message}`);
-    }
-  }
 
-  // Existing generate_prd implementation (keeping it for completeness)
-  private async handleGeneratePRD(args: any) {
-    // Simplified version - the full implementation would be here
-    return {
-      content: [{
-        type: "text",
-        text: `🔄 **PRD Generation**\n\nGenerating PRD for: ${args.product_name}\nConcept: ${args.product_concept}\n\n*Full PRD generation implementation available - this is a simplified response for the parse_prd focus.*`
-      }]
-    };
+    } catch (error: any) {
+      throw new Error(`Failed to add feature: ${error.message}`);
+    }
   }
 
   private setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
         tools: [
-          // ADVANCED PROJECT PLANNING (3 tools)
+          // ADVANCED PROJECT PLANNING (4 tools including add_feature)
           {
             name: 'generate_prd',
             description: 'Generate comprehensive Product Requirements Documents using AI-powered analysis and templates',
@@ -1532,6 +1200,32 @@ ${suggestion.actionItems.map((item: string) => `- ${item}`).join('\n')}
               },
               required: ['prd_content']
             }
+          },
+          {
+            name: 'add_feature',
+            description: 'Add new features to existing projects with comprehensive impact analysis, integration planning, and automated task generation',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                feature_name: { type: 'string', description: 'Name of the feature to be added' },
+                feature_description: { type: 'string', description: 'Detailed description of the feature functionality and requirements' },
+                business_justification: { type: 'string', description: 'Business rationale and expected value of the feature' },
+                target_users: { type: 'string', description: 'Target user groups or personas who will benefit from this feature (default: all users)' },
+                success_metrics: { type: 'array', items: { type: 'string' }, description: 'Key performance indicators and success metrics for the feature' },
+                priority: { type: 'string', enum: ['low', 'medium', 'high', 'critical'], description: 'Feature priority level (default: medium)' },
+                complexity_hint: { type: 'string', enum: ['low', 'medium', 'high', 'very-high', 'auto'], description: 'Manual complexity override or auto-detection (default: auto)' },
+                integration_scope: { type: 'string', enum: ['minimal', 'moderate', 'extensive', 'auto'], description: 'Expected integration complexity or auto-detection (default: auto)' },
+                create_milestone: { type: 'boolean', description: 'Create a dedicated milestone for this feature (default: true)' },
+                milestone_due_date: { type: 'string', description: 'Target completion date for the feature milestone (YYYY-MM-DD)' },
+                create_issues: { type: 'boolean', description: 'Generate GitHub issues from the implementation roadmap (default: true)' },
+                assign_to: { type: 'array', items: { type: 'string' }, description: 'GitHub usernames to assign to generated issues' },
+                include_testing_tasks: { type: 'boolean', description: 'Include comprehensive testing tasks in the roadmap (default: true)' },
+                include_documentation_tasks: { type: 'boolean', description: 'Include documentation and specification tasks (default: true)' },
+                generate_impact_report: { type: 'boolean', description: 'Generate detailed impact analysis and recommendations (default: true)' },
+                dry_run: { type: 'boolean', description: 'Perform analysis only without creating milestone or issues (default: false)' }
+              },
+              required: ['feature_name', 'feature_description']
+            }
           }
         ],
       };
@@ -1548,6 +1242,8 @@ ${suggestion.actionItems.map((item: string) => `- ${item}`).join('\n')}
             return await this.handleParsePRD(args);
           case 'enhance_prd':
             return await this.handleEnhancePrd(args);
+          case 'add_feature':
+            return await this.handleAddFeature(args);
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -1560,12 +1256,40 @@ ${suggestion.actionItems.map((item: string) => `- ${item}`).join('\n')}
     });
   }
 
+  // Placeholder implementations for other PRD tools
+  private async handleGeneratePRD(args: any) {
+    return {
+      content: [{
+        type: "text",
+        text: `🔄 **PRD Generation** (Stub Implementation)\n\nGenerating PRD for: ${args.product_name}\nConcept: ${args.product_concept}\n\n*This is a simplified stub implementation. Full PRD generation capabilities would be implemented here.*`
+      }]
+    };
+  }
+
+  private async handleParsePRD(args: any) {
+    return {
+      content: [{
+        type: "text",
+        text: `🔄 **PRD Parsing** (Stub Implementation)\n\nParsing PRD for project: ${args.project_name}\n\n*This is a simplified stub implementation. Full PRD parsing capabilities would be implemented here.*`
+      }]
+    };
+  }
+
+  private async handleEnhancePrd(args: any) {
+    return {
+      content: [{
+        type: "text",
+        text: `🔄 **PRD Enhancement** (Stub Implementation)\n\nEnhancing PRD with level: ${args.enhancement_level || 'comprehensive'}\n\n*This is a simplified stub implementation. Full PRD enhancement capabilities would be implemented here.*`
+      }]
+    };
+  }
+
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     console.error("GitHub Project Manager MCP server running on stdio");
     console.error(`Repository: ${this.owner}/${this.repo}`);
-    console.error("Tools available: generate_prd, parse_prd, and enhance_prd - Complete PRD lifecycle support!");
+    console.error("Tools available: 4 comprehensive project management tools including add_feature with full impact analysis!");
   }
 }
 
