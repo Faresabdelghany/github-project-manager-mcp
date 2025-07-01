@@ -22,7 +22,7 @@ class GitHubProjectManagerServer {
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '2.8.0',
+        version: '2.9.0',
       }
     );
 
@@ -136,6 +136,259 @@ class GitHubProjectManagerServer {
       console.error('Error getting next sprint number:', error);
       return 1;
     }
+  }
+
+  // AI-powered issue analysis methods
+  private analyzeIssueComplexity(issue: any): number {
+    let complexity = 1;
+    
+    // Analyze title complexity
+    const titleWords = issue.title.split(' ').length;
+    if (titleWords > 10) complexity += 1;
+    
+    // Analyze body complexity
+    if (issue.body) {
+      const bodyLength = issue.body.length;
+      if (bodyLength > 1000) complexity += 2;
+      else if (bodyLength > 500) complexity += 1;
+      
+      // Check for technical keywords
+      const technicalKeywords = ['API', 'database', 'migration', 'refactor', 'architecture', 'integration', 'security'];
+      const techCount = technicalKeywords.filter(keyword => 
+        issue.body.toLowerCase().includes(keyword.toLowerCase())
+      ).length;
+      complexity += Math.min(techCount, 3);
+    }
+    
+    // Analyze labels for complexity indicators
+    const complexityLabels = issue.labels.filter((label: any) => 
+      ['epic', 'large', 'complex', 'research', 'spike'].some(keyword => 
+        label.name.toLowerCase().includes(keyword)
+      )
+    );
+    complexity += complexityLabels.length;
+    
+    // Check for dependencies or linked issues
+    if (issue.body && issue.body.includes('#')) {
+      complexity += 1;
+    }
+    
+    return Math.min(complexity, 8); // Cap at 8 story points
+  }
+
+  private calculateIssuePriority(issue: any): number {
+    let priority = 1;
+    
+    // Priority labels
+    const priorityMap = {
+      'critical': 5,
+      'high': 4,
+      'medium': 3,
+      'low': 2,
+      'lowest': 1
+    };
+    
+    for (const label of issue.labels) {
+      const labelName = label.name.toLowerCase();
+      for (const [key, value] of Object.entries(priorityMap)) {
+        if (labelName.includes(key)) {
+          priority = Math.max(priority, value);
+        }
+      }
+    }
+    
+    // Bug priority boost
+    const isBug = issue.labels.some((label: any) => 
+      label.name.toLowerCase().includes('bug')
+    );
+    if (isBug) priority += 1;
+    
+    // Recent activity boost
+    const daysSinceUpdate = Math.floor(
+      (Date.now() - new Date(issue.updated_at).getTime()) / (1000 * 60 * 60 * 24)
+    );
+    if (daysSinceUpdate < 7) priority += 0.5;
+    
+    return Math.min(priority, 5);
+  }
+
+  private assessIssueReadiness(issue: any): { ready: boolean; score: number; blockers: string[] } {
+    const blockers: string[] = [];
+    let readinessScore = 1;
+    
+    // Check if issue has clear acceptance criteria
+    if (!issue.body || issue.body.length < 50) {
+      blockers.push('Insufficient description');
+      readinessScore -= 0.3;
+    }
+    
+    // Check for blocked labels
+    const blockedLabels = issue.labels.filter((label: any) => 
+      ['blocked', 'waiting', 'needs-info', 'dependencies'].some(keyword =>
+        label.name.toLowerCase().includes(keyword)
+      )
+    );
+    if (blockedLabels.length > 0) {
+      blockers.push(`Blocked by: ${blockedLabels.map(l => l.name).join(', ')}`);
+      readinessScore -= 0.5;
+    }
+    
+    // Check for assignee
+    if (!issue.assignees || issue.assignees.length === 0) {
+      blockers.push('No assignee');
+      readinessScore -= 0.2;
+    }
+    
+    // Check for recent comments indicating activity
+    if (issue.comments > 0) {
+      readinessScore += 0.2;
+    }
+    
+    const finalScore = Math.max(0, Math.min(1, readinessScore));
+    return {
+      ready: finalScore > 0.6 && blockers.length === 0,
+      score: finalScore,
+      blockers
+    };
+  }
+
+  private calculateTeamCapacity(teamMembers: string[], sprintDuration: number): number {
+    // Base capacity: 6 hours per day per team member
+    const hoursPerDay = 6;
+    const totalWorkingDays = Math.floor(sprintDuration * 0.8); // Account for weekends
+    const baseCapacity = teamMembers.length * hoursPerDay * totalWorkingDays;
+    
+    // Assume average 2 hours per story point
+    const storyPointCapacity = Math.floor(baseCapacity / 2);
+    
+    return storyPointCapacity;
+  }
+
+  private groupIssuesByTheme(issues: any[]): { [theme: string]: any[] } {
+    const themes: { [theme: string]: any[] } = {
+      'Frontend': [],
+      'Backend': [],
+      'Database': [],
+      'Infrastructure': [],
+      'Testing': [],
+      'Documentation': [],
+      'Bug Fixes': [],
+      'Feature': [],
+      'Other': []
+    };
+    
+    issues.forEach(issue => {
+      let categorized = false;
+      
+      // Check labels first
+      for (const label of issue.labels) {
+        const labelName = label.name.toLowerCase();
+        if (labelName.includes('frontend') || labelName.includes('ui') || labelName.includes('css')) {
+          themes['Frontend'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('backend') || labelName.includes('api') || labelName.includes('server')) {
+          themes['Backend'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('database') || labelName.includes('db') || labelName.includes('sql')) {
+          themes['Database'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('infrastructure') || labelName.includes('devops') || labelName.includes('deploy')) {
+          themes['Infrastructure'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('test') || labelName.includes('qa')) {
+          themes['Testing'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('doc') || labelName.includes('readme')) {
+          themes['Documentation'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('bug') || labelName.includes('fix')) {
+          themes['Bug Fixes'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('feature') || labelName.includes('enhancement')) {
+          themes['Feature'].push(issue);
+          categorized = true;
+          break;
+        }
+      }
+      
+      // If not categorized by labels, check title/body
+      if (!categorized) {
+        const text = `${issue.title} ${issue.body || ''}`.toLowerCase();
+        if (text.includes('frontend') || text.includes('ui') || text.includes('interface')) {
+          themes['Frontend'].push(issue);
+        } else if (text.includes('backend') || text.includes('api') || text.includes('server')) {
+          themes['Backend'].push(issue);
+        } else if (text.includes('database') || text.includes('db')) {
+          themes['Database'].push(issue);
+        } else if (text.includes('deploy') || text.includes('infrastructure')) {
+          themes['Infrastructure'].push(issue);
+        } else if (text.includes('test')) {
+          themes['Testing'].push(issue);
+        } else if (text.includes('document')) {
+          themes['Documentation'].push(issue);
+        } else if (text.includes('bug') || text.includes('fix') || text.includes('error')) {
+          themes['Bug Fixes'].push(issue);
+        } else {
+          themes['Other'].push(issue);
+        }
+      }
+    });
+    
+    // Remove empty themes
+    Object.keys(themes).forEach(key => {
+      if (themes[key].length === 0) {
+        delete themes[key];
+      }
+    });
+    
+    return themes;
+  }
+
+  private detectConflicts(selectedIssues: any[], teamMembers: string[]): string[] {
+    const conflicts: string[] = [];
+    
+    // Check for assignee overallocation
+    const assigneeWorkload: { [assignee: string]: number } = {};
+    selectedIssues.forEach(issue => {
+      if (issue.assignees && issue.assignees.length > 0) {
+        issue.assignees.forEach((assignee: any) => {
+          if (!assigneeWorkload[assignee.login]) {
+            assigneeWorkload[assignee.login] = 0;
+          }
+          assigneeWorkload[assignee.login] += this.analyzeIssueComplexity(issue);
+        });
+      }
+    });
+    
+    // Flag overallocation (more than 10 story points per person)
+    Object.entries(assigneeWorkload).forEach(([assignee, workload]) => {
+      if (workload > 10) {
+        conflicts.push(`${assignee} is overallocated with ${workload} story points`);
+      }
+    });
+    
+    // Check for dependency conflicts
+    const issueNumbers = selectedIssues.map(issue => issue.number);
+    selectedIssues.forEach(issue => {
+      if (issue.body) {
+        const dependencies = issue.body.match(/#(\d+)/g) || [];
+        dependencies.forEach(dep => {
+          const depNumber = parseInt(dep.replace('#', ''));
+          if (!issueNumbers.includes(depNumber)) {
+            conflicts.push(`Issue #${issue.number} depends on #${depNumber} which is not in sprint`);
+          }
+        });
+      }
+    });
+    
+    return conflicts;
   }
 
   private setupToolHandlers() {
@@ -289,6 +542,26 @@ class GitHubProjectManagerServer {
                 include_team_metrics: { type: 'boolean', description: 'Include team performance and workload distribution (default: true)' }
               },
               required: []
+            }
+          },
+          {
+            name: 'plan_sprint',
+            description: 'AI-powered sprint planning with intelligent issue selection and capacity management',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sprint_title: { type: 'string', description: 'Proposed sprint title' },
+                sprint_duration: { type: 'number', description: 'Sprint duration in days (default: 14)', minimum: 7, maximum: 28 },
+                team_members: { type: 'array', items: { type: 'string' }, description: 'List of team member GitHub usernames' },
+                sprint_goals: { type: 'array', items: { type: 'string' }, description: 'High-level sprint goals and objectives' },
+                max_capacity: { type: 'number', description: 'Maximum story points for the sprint (auto-calculated if not provided)' },
+                priority_filter: { type: 'string', enum: ['high', 'medium', 'low', 'all'], description: 'Minimum priority level for issues (default: medium)' },
+                include_bugs: { type: 'boolean', description: 'Include bug fixes in sprint planning (default: true)' },
+                theme_focus: { type: 'string', description: 'Optional theme focus (e.g., "Frontend", "Backend", "Testing")' },
+                create_sprint: { type: 'boolean', description: 'Actually create the sprint after planning (default: false)' },
+                dry_run: { type: 'boolean', description: 'Show planning analysis without creating sprint (default: true)' }
+              },
+              required: ['sprint_title']
             }
           },
           // MILESTONE MANAGEMENT
@@ -461,6 +734,8 @@ class GitHubProjectManagerServer {
             return await this.handleRemoveIssuesFromSprint(args);
           case 'get_sprint_metrics':
             return await this.handleGetSprintMetrics(args);
+          case 'plan_sprint':
+            return await this.handlePlanSprint(args);
 
           // MILESTONE MANAGEMENT
           case 'create_milestone':
@@ -812,6 +1087,291 @@ class GitHubProjectManagerServer {
     }
   }
 
+  private async handlePlanSprint(args: any) {
+    this.validateRepoConfig();
+
+    try {
+      const sprintDuration = args.sprint_duration || 14;
+      const teamMembers = args.team_members || [];
+      const sprintGoals = args.sprint_goals || [];
+      const priorityFilter = args.priority_filter || 'medium';
+      const includeBugs = args.include_bugs !== false;
+      const themeFocus = args.theme_focus;
+      const createSprint = args.create_sprint === true;
+      const dryRun = args.dry_run !== false;
+
+      // Get all open issues from repository
+      const issuesResponse = await this.octokit.rest.issues.listForRepo({
+        owner: this.owner,
+        repo: this.repo,
+        state: 'open',
+        milestone: 'none', // Only issues not assigned to any milestone
+        per_page: 100
+      });
+
+      let candidateIssues = issuesResponse.data.filter(issue => !issue.pull_request);
+
+      let result = `🤖 **AI-Powered Sprint Planning Analysis**\n\n`;
+      result += `**Proposed Sprint:** ${args.sprint_title}\n`;
+      result += `**Duration:** ${sprintDuration} days\n`;
+      result += `**Team Size:** ${teamMembers.length} members\n`;
+      if (sprintGoals.length > 0) {
+        result += `**Goals:** ${sprintGoals.join(', ')}\n`;
+      }
+      result += `**Available Issues:** ${candidateIssues.length}\n\n`;
+
+      // Calculate team capacity
+      const teamCapacity = teamMembers.length > 0 
+        ? this.calculateTeamCapacity(teamMembers, sprintDuration)
+        : args.max_capacity || 20;
+
+      result += `📊 **Capacity Analysis**\n`;
+      result += `• **Team Capacity:** ${teamCapacity} story points\n`;
+      result += `• **Sprint Duration:** ${sprintDuration} days\n`;
+      result += `• **Daily Capacity:** ${(teamCapacity / sprintDuration).toFixed(1)} story points/day\n\n`;
+
+      // Analyze and score all issues
+      const issueAnalysis = candidateIssues.map(issue => {
+        const complexity = this.analyzeIssueComplexity(issue);
+        const priority = this.calculateIssuePriority(issue);
+        const readiness = this.assessIssueReadiness(issue);
+        
+        // Combined score: readiness * priority * complexity weighting
+        const score = readiness.score * priority * (1 + (complexity / 10));
+        
+        return {
+          issue,
+          complexity,
+          priority,
+          readiness,
+          score,
+          isBug: issue.labels.some((label: any) => label.name.toLowerCase().includes('bug'))
+        };
+      });
+
+      // Filter based on criteria
+      let filteredIssues = issueAnalysis.filter(analysis => {
+        // Priority filter
+        const priorityThresholds = { low: 1, medium: 2, high: 3, all: 0 };
+        if (analysis.priority < priorityThresholds[priorityFilter as keyof typeof priorityThresholds]) {
+          return false;
+        }
+        
+        // Bug filter
+        if (!includeBugs && analysis.isBug) {
+          return false;
+        }
+        
+        // Readiness filter
+        if (!analysis.readiness.ready) {
+          return false;
+        }
+        
+        return true;
+      });
+
+      // Theme-based filtering
+      if (themeFocus) {
+        const themeGroups = this.groupIssuesByTheme(filteredIssues.map(a => a.issue));
+        const themeFocusIssues = themeGroups[themeFocus] || [];
+        const themeFocusNumbers = new Set(themeFocusIssues.map(issue => issue.number));
+        filteredIssues = filteredIssues.filter(analysis => 
+          themeFocusNumbers.has(analysis.issue.number)
+        );
+      }
+
+      // Sort by score (highest first)
+      filteredIssues.sort((a, b) => b.score - a.score);
+
+      result += `🎯 **Issue Selection Analysis**\n`;
+      result += `• **Candidate Issues:** ${candidateIssues.length}\n`;
+      result += `• **After Filtering:** ${filteredIssues.length}\n`;
+      result += `• **Priority Filter:** ${priorityFilter}\n`;
+      result += `• **Include Bugs:** ${includeBugs ? 'Yes' : 'No'}\n`;
+      if (themeFocus) {
+        result += `• **Theme Focus:** ${themeFocus}\n`;
+      }
+      result += `\n`;
+
+      // Select optimal issue combination
+      const selectedIssues = [];
+      let totalComplexity = 0;
+      let excludedIssues = [];
+
+      for (const analysis of filteredIssues) {
+        if (totalComplexity + analysis.complexity <= teamCapacity) {
+          selectedIssues.push(analysis);
+          totalComplexity += analysis.complexity;
+        } else {
+          excludedIssues.push(analysis);
+        }
+      }
+
+      result += `✅ **Recommended Sprint Composition**\n`;
+      result += `• **Selected Issues:** ${selectedIssues.length}\n`;
+      result += `• **Total Story Points:** ${totalComplexity}/${teamCapacity}\n`;
+      result += `• **Capacity Utilization:** ${Math.round((totalComplexity / teamCapacity) * 100)}%\n\n`;
+
+      // Group selected issues by theme
+      const selectedIssueList = selectedIssues.map(a => a.issue);
+      const themeGroups = this.groupIssuesByTheme(selectedIssueList);
+
+      result += `📋 **Selected Issues by Theme:**\n`;
+      Object.entries(themeGroups).forEach(([theme, issues]) => {
+        if (issues.length > 0) {
+          result += `\n**${theme}** (${issues.length} issues):\n`;
+          issues.forEach(issue => {
+            const analysis = selectedIssues.find(a => a.issue.number === issue.number);
+            const complexityEmoji = analysis!.complexity <= 2 ? '🟢' : 
+                                  analysis!.complexity <= 5 ? '🟡' : '🔴';
+            result += `  ${complexityEmoji} #${issue.number}: ${issue.title} (${analysis!.complexity}sp)\n`;
+          });
+        }
+      });
+
+      // Conflict detection
+      const conflicts = this.detectConflicts(selectedIssueList, teamMembers);
+      if (conflicts.length > 0) {
+        result += `\n⚠️ **Potential Conflicts Detected:**\n`;
+        conflicts.forEach(conflict => {
+          result += `• ${conflict}\n`;
+        });
+      }
+
+      // Risk assessment
+      result += `\n🔍 **Risk Assessment:**\n`;
+      const averageComplexity = totalComplexity / selectedIssues.length;
+      const highComplexityIssues = selectedIssues.filter(a => a.complexity > 5).length;
+      const unassignedIssues = selectedIssues.filter(a => !a.issue.assignees || a.issue.assignees.length === 0).length;
+
+      let riskScore = 0;
+      const riskFactors = [];
+
+      if (Math.round((totalComplexity / teamCapacity) * 100) > 90) {
+        riskScore += 3;
+        riskFactors.push('High capacity utilization (>90%)');
+      }
+
+      if (highComplexityIssues > selectedIssues.length * 0.4) {
+        riskScore += 2;
+        riskFactors.push('Many high-complexity issues');
+      }
+
+      if (unassignedIssues > selectedIssues.length * 0.3) {
+        riskScore += 2;
+        riskFactors.push('Many unassigned issues');
+      }
+
+      if (conflicts.length > 0) {
+        riskScore += conflicts.length;
+        riskFactors.push(`${conflicts.length} conflict(s) detected`);
+      }
+
+      const riskLevel = riskScore === 0 ? '🟢 Low' : 
+                       riskScore <= 3 ? '🟡 Medium' : 
+                       riskScore <= 6 ? '🟠 High' : '🔴 Critical';
+
+      result += `• **Risk Level:** ${riskLevel} (Score: ${riskScore})\n`;
+      if (riskFactors.length > 0) {
+        result += `• **Risk Factors:** ${riskFactors.join(', ')}\n`;
+      }
+
+      // Success probability
+      const successProbability = Math.max(0, Math.min(100, 
+        100 - (riskScore * 10) - ((totalComplexity / teamCapacity - 0.8) * 50)
+      ));
+      result += `• **Success Probability:** ${Math.round(successProbability)}%\n`;
+
+      // Recommendations
+      result += `\n💡 **AI Recommendations:**\n`;
+      if (totalComplexity / teamCapacity < 0.7) {
+        result += `• Consider adding ${Math.floor((teamCapacity - totalComplexity) / 2)} more small issues to optimize capacity\n`;
+      }
+      if (unassignedIssues > 0) {
+        result += `• Assign ${unassignedIssues} unassigned issues before sprint start\n`;
+      }
+      if (highComplexityIssues > 2) {
+        result += `• Consider breaking down ${highComplexityIssues} high-complexity issues\n`;
+      }
+      if (conflicts.length > 0) {
+        result += `• Resolve ${conflicts.length} detected conflicts before sprint planning\n`;
+      }
+
+      // Alternative compositions
+      if (excludedIssues.length > 0) {
+        result += `\n🔄 **Alternative Options:**\n`;
+        const topExcluded = excludedIssues.slice(0, 3);
+        topExcluded.forEach(analysis => {
+          result += `• Could swap #${analysis.issue.number} (${analysis.complexity}sp) for better theme alignment\n`;
+        });
+      }
+
+      // Sprint creation option
+      if (!dryRun && createSprint) {
+        result += `\n🚀 **Creating Sprint...**\n`;
+        
+        try {
+          const sprintNumber = await this.getNextSprintNumber();
+          const sprintTitle = args.sprint_title.includes('Sprint') ? args.sprint_title : `Sprint ${sprintNumber}: ${args.sprint_title}`;
+          
+          const startDate = new Date().toISOString().split('T')[0];
+          const end = new Date(Date.now() + (sprintDuration * 24 * 60 * 60 * 1000));
+          const endDate = end.toISOString().split('T')[0];
+
+          const sprintMetadata = {
+            sprintNumber,
+            goals: sprintGoals,
+            duration: sprintDuration,
+            startDate,
+            endDate,
+            description: `AI-planned sprint with ${selectedIssues.length} issues (${totalComplexity} story points)\n\nSelected themes: ${Object.keys(themeGroups).join(', ')}`
+          };
+
+          const sprintDescription = this.createSprintDescription(sprintMetadata);
+          
+          const milestoneResponse = await this.octokit.rest.issues.createMilestone({
+            owner: this.owner,
+            repo: this.repo,
+            title: sprintTitle,
+            description: sprintDescription,
+            due_on: this.formatDateForGitHub(endDate),
+            state: 'open'
+          });
+
+          // Assign selected issues to the sprint
+          for (const analysis of selectedIssues) {
+            await this.octokit.rest.issues.update({
+              owner: this.owner,
+              repo: this.repo,
+              issue_number: analysis.issue.number,
+              milestone: milestoneResponse.data.number
+            });
+          }
+
+          result += `✅ **Sprint Created Successfully!**\n`;
+          result += `• **Milestone:** ${milestoneResponse.data.title}\n`;
+          result += `• **Number:** ${milestoneResponse.data.number}\n`;
+          result += `• **Issues Assigned:** ${selectedIssues.length}\n`;
+          result += `• **URL:** ${milestoneResponse.data.html_url}\n`;
+        } catch (error: any) {
+          result += `❌ **Sprint Creation Failed:** ${error.message}\n`;
+        }
+      } else if (dryRun) {
+        result += `\n🔍 **Dry Run Mode - No Sprint Created**\n`;
+        result += `Use 'create_sprint: true' and 'dry_run: false' to actually create the sprint.\n`;
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: result
+        }]
+      };
+    } catch (error: any) {
+      throw new Error(`Failed to plan sprint: ${error.message}`);
+    }
+  }
+
   // PROJECT MANAGEMENT IMPLEMENTATIONS
   private async handleCreateProject(args: any) {
     return { content: [{ type: "text", text: "Create project functionality implemented" }] };
@@ -940,7 +1500,7 @@ class GitHubProjectManagerServer {
     await this.server.connect(transport);
     console.error("GitHub Project Manager MCP server running on stdio");
     console.error(`Repository: ${this.owner}/${this.repo}`);
-    console.error("Tools available: 22 comprehensive project management tools including get_sprint_metrics");
+    console.error("Tools available: 23 comprehensive project management tools including AI-powered plan_sprint");
   }
 }
 
