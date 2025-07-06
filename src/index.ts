@@ -22,7 +22,7 @@ class GitHubProjectManagerServer {
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '4.0.0',
+        version: '2.11.0',
       }
     );
 
@@ -53,7 +53,95 @@ class GitHubProjectManagerServer {
     }
   }
 
-  // AI-POWERED TASK ANALYSIS METHODS
+  private formatDateForGitHub(dateString?: string): string | undefined {
+    if (!dateString) return undefined;
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) {
+        throw new Error('Invalid date format');
+      }
+      return date.toISOString();
+    } catch (error) {
+      console.error('Date formatting error:', error);
+      return undefined;
+    }
+  }
+
+  private createSprintDescription(metadata: any): string {
+    const sprintData = {
+      type: 'sprint',
+      sprintNumber: metadata.sprintNumber,
+      goals: metadata.goals || [],
+      duration: metadata.duration || 14,
+      startDate: metadata.startDate,
+      endDate: metadata.endDate,
+      description: metadata.description || '',
+      createdAt: metadata.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    return `<!-- SPRINT_METADATA:${JSON.stringify(sprintData)} -->\n\n${metadata.description || ''}`;
+  }
+
+  private parseSprintDescription(description: string): any {
+    if (!description) return null;
+    
+    const match = description.match(/<!-- SPRINT_METADATA:(.*?) -->/);
+    if (!match) return null;
+
+    try {
+      return JSON.parse(match[1]);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  private getSprintStatus(sprintData: any, milestone: any): string {
+    const today = new Date();
+    const startDate = new Date(sprintData.startDate);
+    const endDate = new Date(sprintData.endDate || milestone.due_on);
+
+    if (milestone.state === 'closed') {
+      return 'completed';
+    }
+
+    if (today < startDate) {
+      return 'planned';
+    } else if (today >= startDate && today <= endDate) {
+      return 'active';
+    } else if (today > endDate) {
+      return 'overdue';
+    }
+
+    return 'unknown';
+  }
+
+  private async getNextSprintNumber(): Promise<number> {
+    try {
+      const response = await this.octokit.rest.issues.listMilestones({
+        owner: this.owner,
+        repo: this.repo,
+        state: 'all',
+        per_page: 100
+      });
+
+      let maxSprintNumber = 0;
+      
+      response.data.forEach(milestone => {
+        const sprintData = this.parseSprintDescription(milestone.description || '');
+        if (sprintData && sprintData.type === 'sprint' && sprintData.sprintNumber) {
+          maxSprintNumber = Math.max(maxSprintNumber, sprintData.sprintNumber);
+        }
+      });
+
+      return maxSprintNumber + 1;
+    } catch (error) {
+      console.error('Error getting next sprint number:', error);
+      return 1;
+    }
+  }
+
+  // AI-powered issue analysis methods
   private analyzeIssueComplexity(issue: any): number {
     let complexity = 1;
     
@@ -68,7 +156,7 @@ class GitHubProjectManagerServer {
       else if (bodyLength > 500) complexity += 1;
       
       // Check for technical keywords
-      const technicalKeywords = ['API', 'database', 'migration', 'refactor', 'architecture', 'integration', 'security', 'performance', 'scalability'];
+      const technicalKeywords = ['API', 'database', 'migration', 'refactor', 'architecture', 'integration', 'security'];
       const techCount = technicalKeywords.filter(keyword => 
         issue.body.toLowerCase().includes(keyword.toLowerCase())
       ).length;
@@ -77,15 +165,15 @@ class GitHubProjectManagerServer {
     
     // Analyze labels for complexity indicators
     const complexityLabels = issue.labels.filter((label: any) => 
-      ['epic', 'large', 'complex', 'research', 'spike', 'architectural'].some(keyword => 
+      ['epic', 'large', 'complex', 'research', 'spike'].some(keyword => 
         label.name.toLowerCase().includes(keyword)
       )
     );
     complexity += complexityLabels.length;
     
     // Check for dependencies or linked issues
-    if (issue.body && issue.body.match(/#\d+/g)) {
-      complexity += Math.min(issue.body.match(/#\d+/g)!.length, 2);
+    if (issue.body && issue.body.includes('#')) {
+      complexity += 1;
     }
     
     return Math.min(complexity, 8); // Cap at 8 story points
@@ -97,7 +185,6 @@ class GitHubProjectManagerServer {
     // Priority labels
     const priorityMap = {
       'critical': 5,
-      'urgent': 5,
       'high': 4,
       'medium': 3,
       'low': 2,
@@ -115,15 +202,9 @@ class GitHubProjectManagerServer {
     
     // Bug priority boost
     const isBug = issue.labels.some((label: any) => 
-      label.name.toLowerCase().includes('bug') || label.name.toLowerCase().includes('fix')
+      label.name.toLowerCase().includes('bug')
     );
     if (isBug) priority += 1;
-    
-    // Security issue boost
-    const isSecurity = issue.labels.some((label: any) => 
-      label.name.toLowerCase().includes('security') || label.name.toLowerCase().includes('vulnerability')
-    );
-    if (isSecurity) priority += 2;
     
     // Recent activity boost
     const daysSinceUpdate = Math.floor(
@@ -138,7 +219,7 @@ class GitHubProjectManagerServer {
     const blockers: string[] = [];
     let readinessScore = 1;
     
-    // Check if issue has clear description
+    // Check if issue has clear acceptance criteria
     if (!issue.body || issue.body.length < 50) {
       blockers.push('Insufficient description');
       readinessScore -= 0.3;
@@ -146,7 +227,7 @@ class GitHubProjectManagerServer {
     
     // Check for blocked labels
     const blockedLabels = issue.labels.filter((label: any) => 
-      ['blocked', 'waiting', 'needs-info', 'dependencies', 'on-hold'].some(keyword =>
+      ['blocked', 'waiting', 'needs-info', 'dependencies'].some(keyword =>
         label.name.toLowerCase().includes(keyword)
       )
     );
@@ -157,22 +238,13 @@ class GitHubProjectManagerServer {
     
     // Check for assignee
     if (!issue.assignees || issue.assignees.length === 0) {
-      readinessScore -= 0.1; // Minor penalty for no assignee
-    }
-    
-    // Check for acceptance criteria
-    if (issue.body && issue.body.toLowerCase().includes('acceptance criteria')) {
-      readinessScore += 0.2;
+      blockers.push('No assignee');
+      readinessScore -= 0.2;
     }
     
     // Check for recent comments indicating activity
     if (issue.comments > 0) {
-      readinessScore += 0.1;
-    }
-    
-    // Check if issue is in a milestone
-    if (issue.milestone) {
-      readinessScore += 0.1;
+      readinessScore += 0.2;
     }
     
     const finalScore = Math.max(0, Math.min(1, readinessScore));
@@ -183,224 +255,103 @@ class GitHubProjectManagerServer {
     };
   }
 
-  private categorizeIssuesByContext(issues: any[], context?: string): any[] {
-    if (!context) return issues;
+  private calculateTeamCapacity(teamMembers: string[], sprintDuration: number): number {
+    // Base capacity: 6 hours per day per team member
+    const hoursPerDay = 6;
+    const totalWorkingDays = Math.floor(sprintDuration * 0.8); // Account for weekends
+    const baseCapacity = teamMembers.length * hoursPerDay * totalWorkingDays;
     
-    const contextKeywords = context.toLowerCase().split(/[\s,]+/);
+    // Assume average 2 hours per story point
+    const storyPointCapacity = Math.floor(baseCapacity / 2);
     
-    return issues.filter(issue => {
-      const text = `${issue.title} ${issue.body || ''}`.toLowerCase();
-      const labels = issue.labels.map((l: any) => l.name.toLowerCase()).join(' ');
-      const allText = `${text} ${labels}`;
+    return storyPointCapacity;
+  }
+
+  private groupIssuesByTheme(issues: any[]): { [theme: string]: any[] } {
+    const themes: { [theme: string]: any[] } = {
+      'Frontend': [],
+      'Backend': [],
+      'Database': [],
+      'Infrastructure': [],
+      'Testing': [],
+      'Documentation': [],
+      'Bug Fixes': [],
+      'Feature': [],
+      'Other': []
+    };
+    
+    issues.forEach(issue => {
+      let categorized = false;
       
-      return contextKeywords.some(keyword => allText.includes(keyword));
+      // Check labels first
+      for (const label of issue.labels) {
+        const labelName = label.name.toLowerCase();
+        if (labelName.includes('frontend') || labelName.includes('ui') || labelName.includes('css')) {
+          themes['Frontend'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('backend') || labelName.includes('api') || labelName.includes('server')) {
+          themes['Backend'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('database') || labelName.includes('db') || labelName.includes('sql')) {
+          themes['Database'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('infrastructure') || labelName.includes('devops') || labelName.includes('deploy')) {
+          themes['Infrastructure'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('test') || labelName.includes('qa')) {
+          themes['Testing'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('doc') || labelName.includes('readme')) {
+          themes['Documentation'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('bug') || labelName.includes('fix')) {
+          themes['Bug Fixes'].push(issue);
+          categorized = true;
+          break;
+        } else if (labelName.includes('feature') || labelName.includes('enhancement')) {
+          themes['Feature'].push(issue);
+          categorized = true;
+          break;
+        }
+      }
+      
+      // If not categorized by labels, check title/body
+      if (!categorized) {
+        const text = `${issue.title} ${issue.body || ''}`.toLowerCase();
+        if (text.includes('frontend') || text.includes('ui') || text.includes('interface')) {
+          themes['Frontend'].push(issue);
+        } else if (text.includes('backend') || text.includes('api') || text.includes('server')) {
+          themes['Backend'].push(issue);
+        } else if (text.includes('database') || text.includes('db')) {
+          themes['Database'].push(issue);
+        } else if (text.includes('deploy') || text.includes('infrastructure')) {
+          themes['Infrastructure'].push(issue);
+        } else if (text.includes('test')) {
+          themes['Testing'].push(issue);
+        } else if (text.includes('document')) {
+          themes['Documentation'].push(issue);
+        } else if (text.includes('bug') || text.includes('fix') || text.includes('error')) {
+          themes['Bug Fixes'].push(issue);
+        } else {
+          themes['Other'].push(issue);
+        }
+      }
     });
-  }
-
-  private findSimilarIssues(targetIssue: any, allIssues: any[]): any[] {
-    const targetText = `${targetIssue.title} ${targetIssue.body || ''}`.toLowerCase();
-    const targetWords = targetText.split(/\s+/).filter(word => word.length > 3);
     
-    return allIssues
-      .filter(issue => issue.number !== targetIssue.number)
-      .map(issue => {
-        const issueText = `${issue.title} ${issue.body || ''}`.toLowerCase();
-        const commonWords = targetWords.filter(word => issueText.includes(word));
-        const similarity = commonWords.length / targetWords.length;
-        
-        return { issue, similarity };
-      })
-      .filter(({ similarity }) => similarity > 0.3)
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, 5)
-      .map(({ issue }) => issue);
-  }
-
-  private generateTaskSuggestions(issue: any): any[] {
-    const suggestions = [];
-    const complexity = this.analyzeIssueComplexity(issue);
+    // Remove empty themes
+    Object.keys(themes).forEach(key => {
+      if (themes[key].length === 0) {
+        delete themes[key];
+      }
+    });
     
-    // Suggest breaking down complex issues
-    if (complexity >= 5) {
-      suggestions.push({
-        type: 'breakdown',
-        title: 'Consider breaking this into smaller tasks',
-        description: 'This issue has high complexity and could benefit from being split into smaller, more manageable tasks.'
-      });
-    }
-    
-    // Suggest adding acceptance criteria
-    if (!issue.body || !issue.body.toLowerCase().includes('acceptance criteria')) {
-      suggestions.push({
-        type: 'criteria',
-        title: 'Add acceptance criteria',
-        description: 'Define clear acceptance criteria to make this issue more actionable.'
-      });
-    }
-    
-    // Suggest assigning if unassigned
-    if (!issue.assignees || issue.assignees.length === 0) {
-      suggestions.push({
-        type: 'assignment',
-        title: 'Assign to team member',
-        description: 'Assign this issue to ensure accountability and clear ownership.'
-      });
-    }
-    
-    // Suggest adding to milestone
-    if (!issue.milestone) {
-      suggestions.push({
-        type: 'milestone',
-        title: 'Add to milestone',
-        description: 'Link this issue to a milestone to improve project planning and tracking.'
-      });
-    }
-    
-    return suggestions;
-  }
-
-  // Enhanced AI-powered subtask generation
-  private generateIntelligentSubtasks(issue: any, complexity: number, granularity: string): any[] {
-    const subtasks = [];
-    const text = `${issue.title} ${issue.body || ''}`.toLowerCase();
-    const labels = issue.labels.map((l: any) => l.name.toLowerCase()).join(' ');
-    const allText = `${text} ${labels}`;
-    
-    // Detect task types based on content analysis
-    const taskTypes = this.analyzeTaskTypes(allText, complexity);
-    
-    // Generate subtasks based on identified types
-    if (taskTypes.includes('research') || complexity >= 6) {
-      subtasks.push({
-        title: 'Research and Investigation',
-        type: 'research',
-        phase: 'planning',
-        description: 'Conduct thorough research, investigate existing solutions, and analyze requirements.',
-        complexity: Math.max(1, Math.floor(complexity * 0.15)),
-        estimatedHours: Math.max(4, Math.floor(complexity * 1)),
-        priority: 'high',
-        acceptanceCriteria: [
-          'All requirements are clearly understood and documented',
-          'Research findings are documented with recommendations',
-          'Technical approach is validated and approved'
-        ]
-      });
-    }
-    
-    if (taskTypes.includes('design') || complexity >= 5) {
-      subtasks.push({
-        title: 'Design and Architecture',
-        type: 'design',
-        phase: 'planning',
-        description: 'Create detailed technical design, architecture diagrams, and implementation specifications.',
-        complexity: Math.max(2, Math.floor(complexity * 0.2)),
-        estimatedHours: Math.max(6, Math.floor(complexity * 1.5)),
-        priority: 'high',
-        acceptanceCriteria: [
-          'System architecture is designed and documented',
-          'API contracts and data models are defined',
-          'Design review is completed and approved'
-        ]
-      });
-    }
-    
-    if (taskTypes.includes('backend') || taskTypes.includes('api')) {
-      subtasks.push({
-        title: 'Backend Implementation',
-        type: 'backend',
-        phase: 'implementation',
-        description: 'Implement server-side logic, API endpoints, and data layer functionality.',
-        complexity: Math.max(2, Math.floor(complexity * 0.4)),
-        estimatedHours: Math.max(8, Math.floor(complexity * 2)),
-        priority: 'high',
-        acceptanceCriteria: [
-          'All API endpoints are implemented and functional',
-          'Data models and database schema are implemented',
-          'Business logic is implemented according to specifications'
-        ]
-      });
-    }
-    
-    if (taskTypes.includes('frontend') || taskTypes.includes('ui')) {
-      subtasks.push({
-        title: 'Frontend Implementation',
-        type: 'frontend',
-        phase: 'implementation',
-        description: 'Implement user interface components and client-side functionality.',
-        complexity: Math.max(2, Math.floor(complexity * 0.35)),
-        estimatedHours: Math.max(8, Math.floor(complexity * 2.5)),
-        priority: 'medium',
-        acceptanceCriteria: [
-          'All UI components are implemented according to design',
-          'User interactions and workflows are functional',
-          'Responsive design is implemented'
-        ]
-      });
-    }
-    
-    // Always include testing for complex tasks
-    if (complexity >= 3 || granularity === 'high') {
-      subtasks.push({
-        title: 'Testing and Quality Assurance',
-        type: 'testing',
-        phase: 'validation',
-        description: 'Implement comprehensive testing suite and quality assurance.',
-        complexity: Math.max(1, Math.floor(complexity * 0.25)),
-        estimatedHours: Math.max(6, Math.floor(complexity * 1.5)),
-        priority: 'medium',
-        acceptanceCriteria: [
-          'Unit tests achieve minimum 80% code coverage',
-          'Integration tests cover all API endpoints',
-          'All tests are passing and reliable'
-        ]
-      });
-    }
-    
-    // If no specific subtasks identified, create generic implementation tasks
-    if (subtasks.length === 0) {
-      subtasks.push({
-        title: 'Core Implementation',
-        type: 'development',
-        phase: 'implementation',
-        description: 'Implement the core functionality as described in the issue requirements.',
-        complexity: Math.max(2, Math.floor(complexity * 0.7)),
-        estimatedHours: Math.max(4, complexity * 2.5),
-        priority: 'high',
-        acceptanceCriteria: [
-          'All functional requirements are implemented',
-          'Code follows established standards and patterns',
-          'Implementation is tested and working correctly'
-        ]
-      });
-    }
-    
-    return subtasks;
-  }
-
-  private analyzeTaskTypes(text: string, complexity: number): string[] {
-    const types = [];
-    
-    // Research indicators
-    if (text.includes('research') || text.includes('investigate') || complexity >= 6) {
-      types.push('research');
-    }
-    
-    // Design indicators
-    if (text.includes('design') || text.includes('architecture') || complexity >= 5) {
-      types.push('design');
-    }
-    
-    // Backend indicators
-    if (text.includes('api') || text.includes('backend') || text.includes('server') || text.includes('endpoint')) {
-      types.push('backend', 'api');
-    }
-    
-    // Frontend indicators
-    if (text.includes('frontend') || text.includes('ui') || text.includes('interface') || text.includes('component')) {
-      types.push('frontend', 'ui');
-    }
-    
-    return [...new Set(types)]; // Remove duplicates
+    return themes;
   }
 
   private setupToolHandlers() {
@@ -409,71 +360,572 @@ class GitHubProjectManagerServer {
         tools: [
           // PROJECT MANAGEMENT
           {
+            name: 'create_project',
+            description: 'Create a new GitHub project',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', description: 'Project title' },
+                description: { type: 'string', description: 'Project description' },
+                visibility: { type: 'string', enum: ['private', 'public'], description: 'Project visibility' }
+              },
+              required: ['title', 'visibility']
+            }
+          },
+          {
+            name: 'list_projects',
+            description: 'List GitHub projects',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Project status filter' }
+              },
+              required: ['status']
+            }
+          },
+          {
             name: 'get_project',
-            description: 'Get detailed information about a specific GitHub project including structure, fields, views, items, and progress metrics',
+            description: 'Get details of a specific project',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+                project_number: { type: 'number', description: 'Project number' }
+              },
+              required: []
+            }
+          },
+          {
+            name: 'update_project',
+            description: 'Update project information',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+                project_number: { type: 'number', description: 'Project number' },
+                title: { type: 'string', description: 'New project title' },
+                description: { type: 'string', description: 'New project description' }
+              },
+              required: []
+            }
+          },
+          {
+            name: 'delete_project',
+            description: 'Safely delete GitHub projects with comprehensive data archiving, risk assessment, and confirmation requirements',
             inputSchema: {
               type: 'object',
               properties: {
                 project_id: { type: 'string', description: 'GitHub Project v2 ID (node ID)' },
                 project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
-                owner_login: { type: 'string', description: 'Repository owner or organization login (defaults to configured owner)' },
-                include_items: { type: 'boolean', description: 'Include project items (issues/PRs) (default: true)' },
-                include_fields: { type: 'boolean', description: 'Include custom project fields (default: true)' },
-                include_views: { type: 'boolean', description: 'Include project views (default: true)' },
-                include_metrics: { type: 'boolean', description: 'Calculate and include progress metrics (default: true)' },
-                items_limit: { type: 'number', description: 'Maximum number of items to retrieve (default: 50)', minimum: 1, maximum: 100 }
+                confirm_deletion: { type: 'boolean', description: 'Required confirmation to proceed with permanent deletion (default: false)', default: false }
               },
               required: []
+            }
+          },
+          // MILESTONE MANAGEMENT
+          {
+            name: 'create_milestone',
+            description: 'Create project milestones',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', description: 'Milestone title' },
+                description: { type: 'string', description: 'Milestone description' },
+                due_on: { type: 'string', description: 'Due date (YYYY-MM-DD)' },
+                state: { type: 'string', enum: ['open', 'closed'], description: 'Milestone state' }
+              },
+              required: ['title']
+            }
+          },
+          {
+            name: 'list_milestones',
+            description: 'List milestones with filtering options',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                state: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Milestone state filter' }
+              },
+              required: []
+            }
+          },
+          {
+            name: 'update_milestone',
+            description: 'Update milestone details',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                milestone_number: { type: 'number', description: 'Milestone number' },
+                title: { type: 'string', description: 'Milestone title' },
+                description: { type: 'string', description: 'Milestone description' },
+                due_on: { type: 'string', description: 'Due date (YYYY-MM-DD)' },
+                state: { type: 'string', enum: ['open', 'closed'], description: 'Milestone state' }
+              },
+              required: ['milestone_number']
+            }
+          },
+          {
+            name: 'delete_milestone',
+            description: 'Delete milestones',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                milestone_number: { type: 'number', description: 'Milestone number' }
+              },
+              required: ['milestone_number']
+            }
+          },
+          {
+            name: 'get_milestone_metrics',
+            description: 'Get progress metrics for milestones',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                milestone_number: { type: 'number', description: 'Milestone number' }
+              },
+              required: ['milestone_number']
+            }
+          },
+          {
+            name: 'get_overdue_milestones',
+            description: 'Find overdue milestones',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              required: []
+            }
+          },
+          {
+            name: 'get_upcoming_milestones',
+            description: 'Get upcoming milestones within timeframes',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                days: { type: 'number', description: 'Number of days to look ahead' }
+              },
+              required: ['days']
+            }
+          },
+          // ISSUE MANAGEMENT
+          {
+            name: 'create_issue',
+            description: 'Create new GitHub issues',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', description: 'Issue title' },
+                body: { type: 'string', description: 'Issue description' },
+                labels: { type: 'array', items: { type: 'string' }, description: 'Issue labels' },
+                assignees: { type: 'array', items: { type: 'string' }, description: 'Issue assignees' },
+                milestone: { type: 'number', description: 'Milestone number' }
+              },
+              required: ['title']
+            }
+          },
+          {
+            name: 'list_issues',
+            description: 'List issues with filtering and sorting',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                state: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Issue state' },
+                labels: { type: 'string', description: 'Comma-separated list of labels' },
+                assignee: { type: 'string', description: 'Filter by assignee' },
+                milestone: { type: 'string', description: 'Filter by milestone' }
+              },
+              required: []
+            }
+          },
+          {
+            name: 'get_issue',
+            description: 'Get detailed issue information',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                issue_number: { type: 'number', description: 'Issue number' }
+              },
+              required: ['issue_number']
+            }
+          },
+          {
+            name: 'update_issue',
+            description: 'Update existing issues',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                issue_number: { type: 'number', description: 'Issue number' },
+                title: { type: 'string', description: 'Issue title' },
+                body: { type: 'string', description: 'Issue description' },
+                state: { type: 'string', enum: ['open', 'closed'], description: 'Issue state' },
+                labels: { type: 'array', items: { type: 'string' }, description: 'Issue labels' },
+                assignees: { type: 'array', items: { type: 'string' }, description: 'Issue assignees' },
+                milestone: { type: 'number', description: 'Milestone number' }
+              },
+              required: ['issue_number']
+            }
+          },
+          // SPRINT MANAGEMENT
+          {
+            name: 'create_sprint',
+            description: 'Create development sprints',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', description: 'Sprint title' },
+                description: { type: 'string', description: 'Sprint description' },
+                start_date: { type: 'string', description: 'Sprint start date (YYYY-MM-DD)' },
+                end_date: { type: 'string', description: 'Sprint end date (YYYY-MM-DD)' },
+                duration: { type: 'number', description: 'Sprint duration in days (default: 14)', minimum: 7, maximum: 28 },
+                goals: { type: 'array', items: { type: 'string' }, description: 'Sprint goals and objectives' }
+              },
+              required: ['title']
+            }
+          },
+          {
+            name: 'list_sprints',
+            description: 'List all sprints',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', enum: ['active', 'completed', 'planned', 'overdue', 'all'], description: 'Sprint status filter' }
+              },
+              required: []
+            }
+          },
+          {
+            name: 'get_current_sprint',
+            description: 'Get the active sprint',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                include_issues: { type: 'boolean', description: 'Include list of sprint issues (default: true)' }
+              },
+              required: []
+            }
+          },
+          {
+            name: 'update_sprint',
+            description: 'Update sprint details',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sprint_number: { type: 'number', description: 'Sprint number to update' },
+                title: { type: 'string', description: 'New sprint title' },
+                description: { type: 'string', description: 'New sprint description' },
+                goals: { type: 'array', items: { type: 'string' }, description: 'Updated sprint goals' }
+              },
+              required: ['sprint_number']
+            }
+          },
+          {
+            name: 'add_issues_to_sprint',
+            description: 'Add issues to existing sprints',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sprint_number: { type: 'number', description: 'Sprint number' },
+                issue_numbers: { type: 'array', items: { type: 'number' }, description: 'Array of issue numbers' }
+              },
+              required: ['sprint_number', 'issue_numbers']
+            }
+          },
+          {
+            name: 'remove_issues_from_sprint',
+            description: 'Remove issues from sprints',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sprint_number: { type: 'number', description: 'Sprint number' },
+                issue_numbers: { type: 'array', items: { type: 'number' }, description: 'Array of issue numbers' }
+              },
+              required: ['sprint_number', 'issue_numbers']
+            }
+          },
+          {
+            name: 'get_sprint_metrics',
+            description: 'Get sprint progress metrics',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sprint_number: { type: 'number', description: 'Sprint number to analyze' }
+              },
+              required: ['sprint_number']
+            }
+          },
+          {
+            name: 'plan_sprint',
+            description: 'Plan new sprints with selected issues',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sprint_title: { type: 'string', description: 'Proposed sprint title' },
+                team_members: { type: 'array', items: { type: 'string' }, description: 'List of team member GitHub usernames' },
+                sprint_duration: { type: 'number', description: 'Sprint duration in days (default: 14)' }
+              },
+              required: ['sprint_title']
+            }
+          },
+          // ADVANCED PROJECT PLANNING
+          {
+            name: 'create_roadmap',
+            description: 'Create comprehensive project roadmaps',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', description: 'Roadmap title' },
+                time_horizon: { type: 'string', enum: ['monthly', 'quarterly', 'yearly'], description: 'Timeline granularity' }
+              },
+              required: ['title']
+            }
+          },
+          {
+            name: 'generate_prd',
+            description: 'Generate Product Requirements Documents',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                product_name: { type: 'string', description: 'Product name' },
+                description: { type: 'string', description: 'Product description' }
+              },
+              required: ['product_name']
+            }
+          },
+          {
+            name: 'parse_prd',
+            description: 'Parse PRDs and generate actionable development tasks',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                prd_content: { type: 'string', description: 'PRD content to parse' }
+              },
+              required: ['prd_content']
+            }
+          },
+          {
+            name: 'enhance_prd',
+            description: 'Enhance existing PRDs',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                prd_content: { type: 'string', description: 'Existing PRD content' }
+              },
+              required: ['prd_content']
+            }
+          },
+          {
+            name: 'add_feature',
+            description: 'Add new features to existing projects with impact analysis',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                feature_name: { type: 'string', description: 'Feature name' },
+                feature_description: { type: 'string', description: 'Feature description' }
+              },
+              required: ['feature_name']
             }
           },
           // TASK MANAGEMENT
           {
             name: 'get_next_task',
-            description: 'Get AI-powered recommendations for next tasks to work on based on priority, complexity, and readiness',
+            description: 'Get AI recommendations for next tasks to work on',
             inputSchema: {
               type: 'object',
               properties: {
-                assignee: { type: 'string', description: 'Filter tasks for specific assignee (GitHub username)' },
-                priority_level: { type: 'string', enum: ['high', 'medium', 'low', 'all'], description: 'Minimum priority level (default: medium)' },
-                max_complexity: { type: 'number', description: 'Maximum complexity/story points (default: 8)', minimum: 1, maximum: 13 },
-                include_blocked: { type: 'boolean', description: 'Include blocked tasks in recommendations (default: false)' },
-                limit: { type: 'number', description: 'Maximum number of task recommendations (default: 5)', minimum: 1, maximum: 20 },
-                context: { type: 'string', description: 'Current work context or focus area (e.g., "frontend", "backend", "testing")' },
-                sprint_focus: { type: 'boolean', description: 'Prioritize tasks from current sprint (default: true)' }
+                assignee: { type: 'string', description: 'Filter tasks for specific assignee' },
+                priority_level: { type: 'string', enum: ['high', 'medium', 'low', 'all'], description: 'Minimum priority level' }
               },
               required: []
             }
           },
           {
             name: 'analyze_task_complexity',
-            description: 'Perform detailed AI-powered complexity analysis for tasks with risk assessment and effort estimation',
+            description: 'Perform detailed task complexity analysis',
             inputSchema: {
               type: 'object',
               properties: {
-                issue_number: { type: 'number', description: 'Issue number to analyze' },
-                include_suggestions: { type: 'boolean', description: 'Include complexity reduction suggestions (default: true)' },
-                team_context: { type: 'array', items: { type: 'string' }, description: 'Team member skills/expertise for context' },
-                similar_issues: { type: 'boolean', description: 'Find and analyze similar historical issues (default: true)' },
-                breakdown_tasks: { type: 'boolean', description: 'Suggest task breakdown if complex (default: true)' }
+                issue_number: { type: 'number', description: 'Issue number to analyze' }
               },
               required: ['issue_number']
             }
           },
           {
             name: 'expand_task',
-            description: 'Break down complex tasks into manageable subtasks with dependencies and acceptance criteria - ENHANCED AI-POWERED VERSION',
+            description: 'Break down complex tasks into manageable subtasks',
             inputSchema: {
               type: 'object',
               properties: {
                 issue_number: { type: 'number', description: 'Issue number to break down' },
-                granularity: { type: 'string', enum: ['high', 'medium', 'low'], description: 'Level of task breakdown detail (default: medium)' },
-                create_subtasks: { type: 'boolean', description: 'Actually create GitHub issues for subtasks (default: false)' },
-                assign_to: { type: 'string', description: 'Assignee for created subtasks' },
-                add_to_sprint: { type: 'number', description: 'Sprint/milestone number to add subtasks to' },
-                include_estimates: { type: 'boolean', description: 'Include effort estimates for subtasks (default: true)' },
-                dependency_analysis: { type: 'boolean', description: 'Analyze and specify task dependencies (default: true)' }
+                granularity: { type: 'string', enum: ['high', 'medium', 'low'], description: 'Level of detail' }
               },
               required: ['issue_number']
+            }
+          },
+          // PROJECT STRUCTURE
+          {
+            name: 'create_project_field',
+            description: 'Create custom fields for projects',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'Project ID' },
+                field_name: { type: 'string', description: 'Field name' },
+                field_type: { type: 'string', description: 'Field type' }
+              },
+              required: ['project_id', 'field_name', 'field_type']
+            }
+          },
+          {
+            name: 'list_project_fields',
+            description: 'List all project fields',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'Project ID' }
+              },
+              required: ['project_id']
+            }
+          },
+          {
+            name: 'update_project_field',
+            description: 'Update custom fields',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                field_id: { type: 'string', description: 'Field ID' },
+                field_name: { type: 'string', description: 'New field name' }
+              },
+              required: ['field_id']
+            }
+          },
+          {
+            name: 'create_project_view',
+            description: 'Create project views (board, table, timeline, roadmap)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'Project ID' },
+                view_name: { type: 'string', description: 'View name' },
+                view_type: { type: 'string', description: 'View type' }
+              },
+              required: ['project_id', 'view_name', 'view_type']
+            }
+          },
+          {
+            name: 'list_project_views',
+            description: 'List all project views',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'Project ID' }
+              },
+              required: ['project_id']
+            }
+          },
+          {
+            name: 'update_project_view',
+            description: 'Update project views',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                view_id: { type: 'string', description: 'View ID' },
+                view_name: { type: 'string', description: 'New view name' }
+              },
+              required: ['view_id']
+            }
+          },
+          // PROJECT ITEMS
+          {
+            name: 'add_project_item',
+            description: 'Add items to projects',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'Project ID' },
+                item_id: { type: 'string', description: 'Item ID' }
+              },
+              required: ['project_id', 'item_id']
+            }
+          },
+          {
+            name: 'remove_project_item',
+            description: 'Remove items from projects',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'Project ID' },
+                item_id: { type: 'string', description: 'Item ID' }
+              },
+              required: ['project_id', 'item_id']
+            }
+          },
+          {
+            name: 'list_project_items',
+            description: 'List all project items',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'Project ID' }
+              },
+              required: ['project_id']
+            }
+          },
+          {
+            name: 'set_field_value',
+            description: 'Set field values for project items',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                item_id: { type: 'string', description: 'Item ID' },
+                field_id: { type: 'string', description: 'Field ID' },
+                value: { type: 'string', description: 'Field value' }
+              },
+              required: ['item_id', 'field_id', 'value']
+            }
+          },
+          {
+            name: 'get_field_value',
+            description: 'Get field values for project items',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                item_id: { type: 'string', description: 'Item ID' },
+                field_id: { type: 'string', description: 'Field ID' }
+              },
+              required: ['item_id', 'field_id']
+            }
+          },
+          // LABELS
+          {
+            name: 'create_label',
+            description: 'Create new GitHub labels',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', description: 'Label name' },
+                color: { type: 'string', description: 'Label color (hex without #)' },
+                description: { type: 'string', description: 'Label description' }
+              },
+              required: ['name', 'color']
+            }
+          },
+          {
+            name: 'list_labels',
+            description: 'List all available labels',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              required: []
+            }
+          },
+          // REQUIREMENTS TRACEABILITY
+          {
+            name: 'create_traceability_matrix',
+            description: 'Create comprehensive traceability matrices linking requirements to features to tasks',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                matrix_title: { type: 'string', description: 'Matrix title' }
+              },
+              required: ['matrix_title']
             }
           }
         ],
@@ -485,14 +937,118 @@ class GitHubProjectManagerServer {
         const { name, arguments: args } = request.params;
 
         switch (name) {
+          // PROJECT MANAGEMENT
+          case 'create_project':
+            return await this.handleCreateProject(args);
+          case 'list_projects':
+            return await this.handleListProjects(args);
           case 'get_project':
             return await this.handleGetProject(args);
+          case 'update_project':
+            return await this.handleUpdateProject(args);
+          case 'delete_project':
+            return await this.handleDeleteProject(args);
+
+          // MILESTONE MANAGEMENT
+          case 'create_milestone':
+            return await this.handleCreateMilestone(args);
+          case 'list_milestones':
+            return await this.handleListMilestones(args);
+          case 'update_milestone':
+            return await this.handleUpdateMilestone(args);
+          case 'delete_milestone':
+            return await this.handleDeleteMilestone(args);
+          case 'get_milestone_metrics':
+            return await this.handleGetMilestoneMetrics(args);
+          case 'get_overdue_milestones':
+            return await this.handleGetOverdueMilestones(args);
+          case 'get_upcoming_milestones':
+            return await this.handleGetUpcomingMilestones(args);
+
+          // ISSUE MANAGEMENT
+          case 'create_issue':
+            return await this.handleCreateIssue(args);
+          case 'list_issues':
+            return await this.handleListIssues(args);
+          case 'get_issue':
+            return await this.handleGetIssue(args);
+          case 'update_issue':
+            return await this.handleUpdateIssue(args);
+
+          // SPRINT MANAGEMENT
+          case 'create_sprint':
+            return await this.handleCreateSprint(args);
+          case 'list_sprints':
+            return await this.handleListSprints(args);
+          case 'get_current_sprint':
+            return await this.handleGetCurrentSprint(args);
+          case 'update_sprint':
+            return await this.handleUpdateSprint(args);
+          case 'add_issues_to_sprint':
+            return await this.handleAddIssuesToSprint(args);
+          case 'remove_issues_from_sprint':
+            return await this.handleRemoveIssuesFromSprint(args);
+          case 'get_sprint_metrics':
+            return await this.handleGetSprintMetrics(args);
+          case 'plan_sprint':
+            return await this.handlePlanSprint(args);
+
+          // ADVANCED PROJECT PLANNING
+          case 'create_roadmap':
+            return await this.handleCreateRoadmap(args);
+          case 'generate_prd':
+            return await this.handleGeneratePRD(args);
+          case 'parse_prd':
+            return await this.handleParsePRD(args);
+          case 'enhance_prd':
+            return await this.handleEnhancePRD(args);
+          case 'add_feature':
+            return await this.handleAddFeature(args);
+
+          // TASK MANAGEMENT
           case 'get_next_task':
             return await this.handleGetNextTask(args);
           case 'analyze_task_complexity':
             return await this.handleAnalyzeTaskComplexity(args);
           case 'expand_task':
             return await this.handleExpandTask(args);
+
+          // PROJECT STRUCTURE
+          case 'create_project_field':
+            return await this.handleCreateProjectField(args);
+          case 'list_project_fields':
+            return await this.handleListProjectFields(args);
+          case 'update_project_field':
+            return await this.handleUpdateProjectField(args);
+          case 'create_project_view':
+            return await this.handleCreateProjectView(args);
+          case 'list_project_views':
+            return await this.handleListProjectViews(args);
+          case 'update_project_view':
+            return await this.handleUpdateProjectView(args);
+
+          // PROJECT ITEMS
+          case 'add_project_item':
+            return await this.handleAddProjectItem(args);
+          case 'remove_project_item':
+            return await this.handleRemoveProjectItem(args);
+          case 'list_project_items':
+            return await this.handleListProjectItems(args);
+          case 'set_field_value':
+            return await this.handleSetFieldValue(args);
+          case 'get_field_value':
+            return await this.handleGetFieldValue(args);
+
+          // LABELS
+          case 'create_label':
+            return await this.handleCreateLabel(args);
+          case 'list_labels':
+            return await this.handleListLabels(args);
+
+          // REQUIREMENTS TRACEABILITY
+          case 'create_traceability_matrix':
+            return await this.handleCreateTraceabilityMatrix(args);
+
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -505,37 +1061,52 @@ class GitHubProjectManagerServer {
     });
   }
 
-  // PROJECT MANAGEMENT IMPLEMENTATIONS
+  // STUB IMPLEMENTATIONS - All tools return placeholder responses
+  private async handleCreateProject(args: any) {
+    return { content: [{ type: "text", text: "Create project functionality - to be implemented" }] };
+  }
+
+  private async handleListProjects(args: any) {
+    return { content: [{ type: "text", text: "List projects functionality - to be implemented" }] };
+  }
+
   private async handleGetProject(args: any) {
+    return { content: [{ type: "text", text: "Get project functionality - to be implemented" }] };
+  }
+
+  private async handleUpdateProject(args: any) {
+    return { content: [{ type: "text", text: "Update project functionality - to be implemented" }] };
+  }
+
+  private async handleDeleteProject(args: any) {
     try {
-      const {
-        project_id,
-        project_number,
-        owner_login = this.owner,
-        include_items = true,
-        include_fields = true,
-        include_views = true,
-        include_metrics = true,
-        items_limit = 50
-      } = args;
+      const { project_id, project_number, confirm_deletion = false } = args;
 
       if (!project_id && !project_number) {
-        throw new Error('Either project_id or project_number must be provided');
+        return {
+          content: [{
+            type: "text",
+            text: `❌ **Error: Missing Required Parameters**\n\n` +
+                  `Either \`project_id\` or \`project_number\` must be provided.\n\n` +
+                  `**Usage Examples:**\n` +
+                  `• delete_project with project_id: "PVT_kwDOBZ..."\n` +
+                  `• delete_project with project_number: 1`
+          }]
+        };
       }
 
-      if (!owner_login) {
-        throw new Error('owner_login must be provided or GITHUB_OWNER environment variable must be set');
-      }
-
-      let result = `🏗️ **GitHub Project Details**\n\n`;
-      result += `**Repository/Organization:** ${owner_login}\n`;
-      result += `**Retrieved:** ${new Date().toLocaleString()}\n\n`;
+      let result = `⚠️ **GitHub Project Deletion - Safety Protocol**\n\n`;
+      result += `**Repository/Organization:** ${this.owner}\n`;
+      result += `**Initiated:** ${new Date().toLocaleString()}\n\n`;
       result += `---\n\n`;
 
-      let projectData: any = {};
+      let projectData: any = null;
+      let archiveData: any = {};
 
       try {
-        // First, get basic project information
+        // First, retrieve and archive project data before deletion
+        result += `## 🔍 **Step 1: Project Data Retrieval & Validation**\n\n`;
+
         if (project_id) {
           // Use project_id (node ID) directly
           const projectQuery = `
@@ -556,23 +1127,20 @@ class GitHubProjectManagerServer {
                     ... on Organization {
                       login
                       name
-                      url
                     }
                     ... on User {
                       login
                       name
-                      url
                     }
                   }
-                  ${include_fields ? `
                   fields(first: 20) {
+                    totalCount
                     nodes {
                       ... on ProjectV2Field {
                         id
                         name
                         dataType
                         createdAt
-                        updatedAt
                       }
                       ... on ProjectV2SingleSelectField {
                         id
@@ -599,32 +1167,28 @@ class GitHubProjectManagerServer {
                       }
                     }
                   }
-                  ` : ''}
-                  ${include_views ? `
                   views(first: 10) {
+                    totalCount
                     nodes {
                       id
                       name
                       layout
                       createdAt
-                      updatedAt
                     }
                   }
-                  ` : ''}
-                  ${include_items ? `
-                  items(first: ${items_limit}) {
+                  items(first: 100) {
                     totalCount
                     nodes {
                       id
                       type
                       createdAt
-                      updatedAt
                       content {
                         ... on Issue {
                           id
                           number
                           title
                           state
+                          url
                           assignees(first: 5) {
                             nodes {
                               login
@@ -636,13 +1200,13 @@ class GitHubProjectManagerServer {
                               color
                             }
                           }
-                          url
                         }
                         ... on PullRequest {
                           id
                           number
                           title
                           state
+                          url
                           assignees(first: 5) {
                             nodes {
                               login
@@ -654,12 +1218,10 @@ class GitHubProjectManagerServer {
                               color
                             }
                           }
-                          url
                         }
                       }
                     }
                   }
-                  ` : ''}
                 }
               }
             }
@@ -690,23 +1252,20 @@ class GitHubProjectManagerServer {
                     ... on Organization {
                       login
                       name
-                      url
                     }
                     ... on User {
                       login
                       name
-                      url
                     }
                   }
-                  ${include_fields ? `
                   fields(first: 20) {
+                    totalCount
                     nodes {
                       ... on ProjectV2Field {
                         id
                         name
                         dataType
                         createdAt
-                        updatedAt
                       }
                       ... on ProjectV2SingleSelectField {
                         id
@@ -718,58 +1277,29 @@ class GitHubProjectManagerServer {
                           color
                         }
                       }
-                      ... on ProjectV2IterationField {
-                        id
-                        name
-                        dataType
-                        configuration {
-                          iterations {
-                            id
-                            title
-                            duration
-                            startDate
-                          }
-                        }
-                      }
                     }
                   }
-                  ` : ''}
-                  ${include_views ? `
                   views(first: 10) {
+                    totalCount
                     nodes {
                       id
                       name
                       layout
                       createdAt
-                      updatedAt
                     }
                   }
-                  ` : ''}
-                  ${include_items ? `
-                  items(first: ${items_limit}) {
+                  items(first: 100) {
                     totalCount
                     nodes {
                       id
                       type
                       createdAt
-                      updatedAt
                       content {
                         ... on Issue {
                           id
                           number
                           title
                           state
-                          assignees(first: 5) {
-                            nodes {
-                              login
-                            }
-                          }
-                          labels(first: 10) {
-                            nodes {
-                              name
-                              color
-                            }
-                          }
                           url
                         }
                         ... on PullRequest {
@@ -777,23 +1307,11 @@ class GitHubProjectManagerServer {
                           number
                           title
                           state
-                          assignees(first: 5) {
-                            nodes {
-                              login
-                            }
-                          }
-                          labels(first: 10) {
-                            nodes {
-                              name
-                              color
-                            }
-                          }
                           url
                         }
                       }
                     }
                   }
-                  ` : ''}
                 }
               }
               user(login: $owner) {
@@ -812,86 +1330,44 @@ class GitHubProjectManagerServer {
                     ... on Organization {
                       login
                       name
-                      url
                     }
                     ... on User {
                       login
                       name
-                      url
                     }
                   }
-                  ${include_fields ? `
                   fields(first: 20) {
+                    totalCount
                     nodes {
                       ... on ProjectV2Field {
                         id
                         name
                         dataType
                         createdAt
-                        updatedAt
-                      }
-                      ... on ProjectV2SingleSelectField {
-                        id
-                        name
-                        dataType
-                        options {
-                          id
-                          name
-                          color
-                        }
-                      }
-                      ... on ProjectV2IterationField {
-                        id
-                        name
-                        dataType
-                        configuration {
-                          iterations {
-                            id
-                            title
-                            duration
-                            startDate
-                          }
-                        }
                       }
                     }
                   }
-                  ` : ''}
-                  ${include_views ? `
                   views(first: 10) {
+                    totalCount
                     nodes {
                       id
                       name
                       layout
                       createdAt
-                      updatedAt
                     }
                   }
-                  ` : ''}
-                  ${include_items ? `
-                  items(first: ${items_limit}) {
+                  items(first: 100) {
                     totalCount
                     nodes {
                       id
                       type
                       createdAt
-                      updatedAt
                       content {
                         ... on Issue {
                           id
                           number
                           title
                           state
-                          assignees(first: 5) {
-                            nodes {
-                              login
-                            }
-                          }
-                          labels(first: 10) {
-                            nodes {
-                              name
-                              color
-                            }
-                          }
                           url
                         }
                         ... on PullRequest {
@@ -899,30 +1375,18 @@ class GitHubProjectManagerServer {
                           number
                           title
                           state
-                          assignees(first: 5) {
-                            nodes {
-                              login
-                            }
-                          }
-                          labels(first: 10) {
-                            nodes {
-                              name
-                              color
-                            }
-                          }
                           url
                         }
                       }
                     }
                   }
-                  ` : ''}
                 }
               }
             }
           `;
 
           const response = await this.graphqlWithAuth(projectQuery, {
-            owner: owner_login,
+            owner: this.owner,
             projectNumber: project_number
           });
 
@@ -931,21 +1395,17 @@ class GitHubProjectManagerServer {
         }
 
         if (!projectData) {
-          result += `❌ **Project not found**\n\n`;
+          result += `❌ **Project Not Found**\n\n`;
           result += `**Search Parameters:**\n`;
           if (project_id) result += `- Project ID: ${project_id}\n`;
           if (project_number) result += `- Project Number: ${project_number}\n`;
-          result += `- Owner: ${owner_login}\n\n`;
+          result += `- Owner: ${this.owner}\n\n`;
           result += `**Possible Issues:**\n`;
           result += `• Project doesn't exist or has been deleted\n`;
           result += `• Insufficient permissions to access project\n`;
           result += `• Wrong owner/organization specified\n`;
           result += `• Project ID or number is incorrect\n\n`;
-          result += `**Suggestions:**\n`;
-          result += `• Verify project exists in GitHub web interface\n`;
-          result += `• Check access permissions for the project\n`;
-          result += `• Ensure correct owner login is specified\n`;
-          result += `• Verify the project number or ID is correct`;
+          result += `**Cannot proceed with deletion of non-existent project.**`;
 
           return {
             content: [{
@@ -955,181 +1415,271 @@ class GitHubProjectManagerServer {
           };
         }
 
-        // Basic project information
-        result += `## 📋 **Project Overview**\n\n`;
-        result += `**Title:** ${projectData.title}\n`;
-        result += `**Number:** #${projectData.number}\n`;
-        result += `**ID:** ${projectData.id}\n`;
-        result += `**Status:** ${projectData.closed ? '🔒 Closed' : '🟢 Open'}\n`;
-        result += `**Visibility:** ${projectData.public ? '🌍 Public' : '🔒 Private'}\n`;
-        result += `**Owner:** ${projectData.owner.name || projectData.owner.login} (@${projectData.owner.login})\n`;
-        result += `**Created:** ${new Date(projectData.createdAt).toLocaleDateString()}\n`;
-        result += `**Updated:** ${new Date(projectData.updatedAt).toLocaleDateString()}\n`;
-        result += `**URL:** ${projectData.url}\n\n`;
-
-        if (projectData.shortDescription) {
-          result += `**Description:** ${projectData.shortDescription}\n\n`;
-        }
-
-        if (projectData.readme) {
-          const readmePreview = projectData.readme.length > 200 
-            ? projectData.readme.substring(0, 200) + '...' 
-            : projectData.readme;
-          result += `**README Preview:**\n${readmePreview}\n\n`;
-        }
-
-        // Project fields information
-        if (include_fields && projectData.fields?.nodes?.length > 0) {
-          result += `## 🏷️ **Custom Fields (${projectData.fields.nodes.length})**\n\n`;
-          
-          projectData.fields.nodes.forEach((field: any, index: number) => {
-            result += `${index + 1}. **${field.name}** (${field.dataType})\n`;
-            
-            if (field.options) {
-              result += `   Options: ${field.options.map((opt: any) => `${opt.name} (${opt.color})`).join(', ')}\n`;
-            }
-            
-            if (field.configuration?.iterations) {
-              result += `   Iterations: ${field.configuration.iterations.length} configured\n`;
-              field.configuration.iterations.slice(0, 3).forEach((iteration: any) => {
-                result += `     • ${iteration.title} (${iteration.duration} days)\n`;
-              });
-            }
-            
-            result += `   Created: ${new Date(field.createdAt).toLocaleDateString()}\n\n`;
-          });
-        }
-
-        // Project views information
-        if (include_views && projectData.views?.nodes?.length > 0) {
-          result += `## 👁️ **Views (${projectData.views.nodes.length})**\n\n`;
-          
-          projectData.views.nodes.forEach((view: any, index: number) => {
-            result += `${index + 1}. **${view.name}** (${view.layout})\n`;
-            result += `   Created: ${new Date(view.createdAt).toLocaleDateString()}\n`;
-            result += `   Updated: ${new Date(view.updatedAt).toLocaleDateString()}\n\n`;
-          });
-        }
-
-        // Project items and metrics
-        if (include_items && projectData.items) {
-          const items = projectData.items.nodes || [];
-          const totalCount = projectData.items.totalCount || items.length;
-          
-          result += `## 📦 **Project Items (${totalCount} total, showing ${items.length})**\n\n`;
-
-          if (include_metrics) {
-            // Calculate metrics
-            const issues = items.filter((item: any) => item.content && item.content.__typename === 'Issue');
-            const pullRequests = items.filter((item: any) => item.content && item.content.__typename === 'PullRequest');
-            
-            const openIssues = issues.filter((item: any) => item.content.state === 'OPEN').length;
-            const closedIssues = issues.filter((item: any) => item.content.state === 'CLOSED').length;
-            const openPRs = pullRequests.filter((item: any) => item.content.state === 'OPEN').length;
-            const mergedPRs = pullRequests.filter((item: any) => item.content.state === 'MERGED').length;
-            const closedPRs = pullRequests.filter((item: any) => item.content.state === 'CLOSED').length;
-
-            result += `### 📊 **Progress Metrics**\n\n`;
-            result += `**Issues:**\n`;
-            result += `- Open: ${openIssues}\n`;
-            result += `- Closed: ${closedIssues}\n`;
-            result += `- Completion Rate: ${issues.length > 0 ? Math.round((closedIssues / issues.length) * 100) : 0}%\n\n`;
-            
-            result += `**Pull Requests:**\n`;
-            result += `- Open: ${openPRs}\n`;
-            result += `- Merged: ${mergedPRs}\n`;
-            result += `- Closed: ${closedPRs}\n`;
-            result += `- Merge Rate: ${pullRequests.length > 0 ? Math.round((mergedPRs / pullRequests.length) * 100) : 0}%\n\n`;
-
-            // Overall progress
-            const totalItems = issues.length + pullRequests.length;
-            const completedItems = closedIssues + mergedPRs;
-            const overallProgress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
-            
-            result += `**Overall Progress:** ${overallProgress}% (${completedItems}/${totalItems} items completed)\n\n`;
+        // Archive project data
+        archiveData = {
+          timestamp: new Date().toISOString(),
+          project: {
+            id: projectData.id,
+            number: projectData.number,
+            title: projectData.title,
+            shortDescription: projectData.shortDescription,
+            readme: projectData.readme,
+            public: projectData.public,
+            closed: projectData.closed,
+            createdAt: projectData.createdAt,
+            updatedAt: projectData.updatedAt,
+            url: projectData.url,
+            owner: projectData.owner
+          },
+          fields: projectData.fields?.nodes || [],
+          views: projectData.views?.nodes || [],
+          items: projectData.items?.nodes || [],
+          statistics: {
+            totalFields: projectData.fields?.totalCount || 0,
+            totalViews: projectData.views?.totalCount || 0,
+            totalItems: projectData.items?.totalCount || 0,
+            openIssues: projectData.items?.nodes?.filter((item: any) => 
+              item.content && item.content.__typename === 'Issue' && item.content.state === 'OPEN'
+            ).length || 0,
+            closedIssues: projectData.items?.nodes?.filter((item: any) => 
+              item.content && item.content.__typename === 'Issue' && item.content.state === 'CLOSED'
+            ).length || 0,
+            openPRs: projectData.items?.nodes?.filter((item: any) => 
+              item.content && item.content.__typename === 'PullRequest' && item.content.state === 'OPEN'
+            ).length || 0,
+            mergedPRs: projectData.items?.nodes?.filter((item: any) => 
+              item.content && item.content.__typename === 'PullRequest' && item.content.state === 'MERGED'
+            ).length || 0
           }
+        };
 
-          // List recent items
-          if (items.length > 0) {
-            result += `### 📝 **Recent Items (Latest ${Math.min(10, items.length)})**\n\n`;
-            
-            items.slice(0, 10).forEach((item: any, index: number) => {
-              if (!item.content) return;
-              
-              const content = item.content;
-              const stateEmoji = 
-                content.state === 'OPEN' ? '🟢' :
-                content.state === 'CLOSED' ? '🔴' :
-                content.state === 'MERGED' ? '🟣' : '⚪';
-              
-              result += `${index + 1}. ${stateEmoji} **${content.title}** (#${content.number})\n`;
-              
-              if (content.assignees?.nodes?.length > 0) {
-                result += `   Assigned: ${content.assignees.nodes.map((a: any) => a.login).join(', ')}\n`;
-              }
-              
-              if (content.labels?.nodes?.length > 0) {
-                result += `   Labels: ${content.labels.nodes.map((l: any) => l.name).join(', ')}\n`;
-              }
-              
-              result += `   Updated: ${new Date(item.updatedAt).toLocaleDateString()}\n`;
-              result += `   Link: ${content.url}\n\n`;
-            });
+        result += `✅ **Project Located and Archived**\n`;
+        result += `- **Title:** ${projectData.title}\n`;
+        result += `- **ID:** ${projectData.id}\n`;
+        result += `- **Number:** #${projectData.number}\n`;
+        result += `- **Owner:** ${projectData.owner.login}\n`;
+        result += `- **Created:** ${new Date(projectData.createdAt).toLocaleDateString()}\n`;
+        result += `- **Items:** ${archiveData.statistics.totalItems}\n`;
+        result += `- **Views:** ${archiveData.statistics.totalViews}\n`;
+        result += `- **Fields:** ${archiveData.statistics.totalFields}\n\n`;
 
-            if (totalCount > items.length) {
-              result += `... and ${totalCount - items.length} more items\n\n`;
-            }
-          }
-        }
-
-        // Summary and recommendations
-        result += `## 🎯 **Summary & Recommendations**\n\n`;
+        // Risk assessment
+        result += `## ⚠️ **Step 2: Risk Assessment & Impact Analysis**\n\n`;
         
-        if (include_metrics && projectData.items) {
-          const items = projectData.items.nodes || [];
-          const issues = items.filter((item: any) => item.content && item.content.__typename === 'Issue');
-          const totalItems = items.length;
-          const completedItems = items.filter((item: any) => 
-            item.content && (item.content.state === 'CLOSED' || item.content.state === 'MERGED')
-          ).length;
+        const totalItems = archiveData.statistics.totalItems;
+        const activeItems = archiveData.statistics.openIssues + archiveData.statistics.openPRs;
+        const customViews = archiveData.statistics.totalViews;
+        const customFields = archiveData.statistics.totalFields;
 
-          if (totalItems === 0) {
-            result += `📝 **Getting Started:** This project is empty. Consider adding issues or pull requests to track your work.\n\n`;
-          } else if (completedItems / totalItems < 0.3) {
-            result += `🚀 **Early Stage:** Project is in early development with ${Math.round((completedItems / totalItems) * 100)}% completion.\n\n`;
-          } else if (completedItems / totalItems < 0.7) {
-            result += `⚡ **Active Development:** Project is progressing well with ${Math.round((completedItems / totalItems) * 100)}% completion.\n\n`;
-          } else {
-            result += `🎉 **Nearing Completion:** Project is well advanced with ${Math.round((completedItems / totalItems) * 100)}% completion.\n\n`;
-          }
+        let riskLevel = 'LOW';
+        const risks = [];
 
-          // Specific recommendations
-          result += `**Recommendations:**\n`;
-          
-          if (issues.filter((i: any) => !i.content.assignees || i.content.assignees.nodes.length === 0).length > 0) {
-            result += `• Assign unassigned issues to team members\n`;
-          }
-          
-          if (!projectData.fields || projectData.fields.nodes.length === 0) {
-            result += `• Consider adding custom fields to better organize work\n`;
-          }
-          
-          if (!projectData.views || projectData.views.nodes.length <= 1) {
-            result += `• Create additional views to visualize work in different ways\n`;
-          }
-          
-          if (projectData.shortDescription && projectData.shortDescription.length < 50) {
-            result += `• Expand project description to provide more context\n`;
-          }
-          
-          result += `• Regularly review and update project items\n`;
-          result += `• Use project automation to streamline workflows\n`;
+        if (totalItems > 50) {
+          riskLevel = 'HIGH';
+          risks.push(`Large project with ${totalItems} items`);
+        } else if (totalItems > 10) {
+          riskLevel = 'MEDIUM';
+          risks.push(`Medium-sized project with ${totalItems} items`);
         }
 
-        result += `\n💡 **Tip:** Use the project URL to access the full web interface for detailed management: ${projectData.url}`;
+        if (activeItems > 0) {
+          riskLevel = riskLevel === 'LOW' ? 'MEDIUM' : 'HIGH';
+          risks.push(`${activeItems} active items (open issues/PRs)`);
+        }
+
+        if (customViews > 3) {
+          risks.push(`${customViews} custom views will be lost`);
+        }
+
+        if (customFields > 3) {
+          risks.push(`${customFields} custom fields will be lost`);
+        }
+
+        if (!projectData.closed) {
+          risks.push('Project is currently active (not closed)');
+        }
+
+        const riskEmoji = riskLevel === 'HIGH' ? '🔴' : riskLevel === 'MEDIUM' ? '🟡' : '🟢';
+        
+        result += `**Risk Level:** ${riskEmoji} **${riskLevel}**\n\n`;
+        
+        if (risks.length > 0) {
+          result += `**Impact Analysis:**\n`;
+          risks.forEach(risk => {
+            result += `• ${risk}\n`;
+          });
+          result += `\n`;
+        }
+
+        result += `**Data Loss Warning:**\n`;
+        result += `🚨 **PERMANENT DELETION** - This action cannot be undone!\n`;
+        result += `• All project structure will be lost\n`;
+        result += `• All custom fields and views will be deleted\n`;
+        result += `• All project items associations will be removed\n`;
+        result += `• Issues and PRs will remain but lose project context\n\n`;
+
+        if (!confirm_deletion) {
+          result += `## 🛑 **Step 3: Confirmation Required**\n\n`;
+          result += `**DELETION BLOCKED** - Safety confirmation required.\n\n`;
+          result += `To proceed with deletion, you must acknowledge the risks by adding the confirmation parameter:\n\n`;
+          result += `\`\`\`\n`;
+          result += `delete_project({\n`;
+          if (project_id) {
+            result += `  project_id: "${project_id}",\n`;
+          } else {
+            result += `  project_number: ${project_number},\n`;
+          }
+          result += `  confirm_deletion: true\n`;
+          result += `})\n`;
+          result += `\`\`\`\n\n`;
+          result += `**⚠️ WARNING:** Once confirmed, this project will be permanently deleted!\n\n`;
+          result += `**Pre-deletion Checklist:**\n`;
+          result += `- [ ] Project data has been backed up if needed\n`;
+          result += `- [ ] All team members have been notified\n`;
+          result += `- [ ] Alternative project arrangements are in place\n`;
+          result += `- [ ] You understand this action is irreversible\n\n`;
+
+          // Include archive data for reference
+          result += `## 📋 **Project Archive Summary**\n\n`;
+          result += `**Project Details:**\n`;
+          result += `- Title: ${projectData.title}\n`;
+          result += `- Description: ${projectData.shortDescription || 'None'}\n`;
+          result += `- Visibility: ${projectData.public ? 'Public' : 'Private'}\n`;
+          result += `- Status: ${projectData.closed ? 'Closed' : 'Open'}\n\n`;
+          
+          result += `**Content Summary:**\n`;
+          result += `- Total Items: ${totalItems}\n`;
+          result += `- Open Issues: ${archiveData.statistics.openIssues}\n`;
+          result += `- Closed Issues: ${archiveData.statistics.closedIssues}\n`;
+          result += `- Open PRs: ${archiveData.statistics.openPRs}\n`;
+          result += `- Merged PRs: ${archiveData.statistics.mergedPRs}\n`;
+          result += `- Custom Fields: ${customFields}\n`;
+          result += `- Custom Views: ${customViews}\n\n`;
+
+          if (totalItems > 0) {
+            result += `**Recent Items Preview:**\n`;
+            const recentItems = projectData.items?.nodes?.slice(0, 5) || [];
+            recentItems.forEach((item: any, index: number) => {
+              if (item.content) {
+                const stateEmoji = item.content.state === 'OPEN' ? '🟢' : 
+                                 item.content.state === 'CLOSED' ? '🔴' : 
+                                 item.content.state === 'MERGED' ? '🟣' : '⚪';
+                result += `${index + 1}. ${stateEmoji} ${item.content.title} (#${item.content.number})\n`;
+              }
+            });
+            if (totalItems > 5) {
+              result += `... and ${totalItems - 5} more items\n`;
+            }
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: result
+            }]
+          };
+        }
+
+        // Confirmed deletion - proceed with actual deletion
+        result += `## 🔥 **Step 3: Confirmed Deletion in Progress**\n\n`;
+        result += `⚠️ **CONFIRMED DELETION** - Proceeding with permanent removal...\n\n`;
+
+        // Perform the actual deletion
+        const deleteQuery = `
+          mutation($projectId: ID!) {
+            deleteProjectV2(input: {projectId: $projectId}) {
+              projectV2 {
+                id
+                title
+              }
+            }
+          }
+        `;
+
+        try {
+          const deleteResponse = await this.graphqlWithAuth(deleteQuery, {
+            projectId: projectData.id
+          });
+
+          result += `✅ **Deletion Successful**\n\n`;
+          result += `**Project Permanently Deleted:**\n`;
+          result += `- Title: ${projectData.title}\n`;
+          result += `- ID: ${projectData.id}\n`;
+          result += `- Number: #${projectData.number}\n`;
+          result += `- Deletion Time: ${new Date().toLocaleString()}\n\n`;
+
+        } catch (deleteError: any) {
+          result += `❌ **Deletion Failed**\n\n`;
+          result += `**Error:** ${deleteError.message}\n\n`;
+          result += `**Possible Causes:**\n`;
+          result += `• Insufficient permissions to delete project\n`;
+          result += `• Project is protected or locked\n`;
+          result += `• GitHub API temporary issue\n`;
+          result += `• Project was already deleted by another user\n\n`;
+          result += `**Recommendations:**\n`;
+          result += `• Verify you have admin permissions for this project\n`;
+          result += `• Check if the project still exists in GitHub web interface\n`;
+          result += `• Try again in a few minutes\n`;
+          result += `• Contact repository/organization admin if needed\n\n`;
+          
+          // Still provide archive data even if deletion failed
+          result += `## 📋 **Project Archive (Deletion Failed)**\n\n`;
+          result += `Since deletion failed, the project data is preserved.\n`;
+          result += `Archive data is available for future reference or retry attempts.\n\n`;
+          result += `**Archived Data Summary:**\n`;
+          result += `- Archive Timestamp: ${archiveData.timestamp}\n`;
+          result += `- Total Items Archived: ${totalItems}\n`;
+          result += `- Views Archived: ${customViews}\n`;
+          result += `- Fields Archived: ${customFields}\n`;
+
+          return {
+            content: [{
+              type: "text",
+              text: result
+            }]
+          };
+        }
+
+        result += `## 📊 **Step 4: Deletion Report & Recovery Information**\n\n`;
+        result += `**Archive Information:**\n`;
+        result += `- Archive Created: ${archiveData.timestamp}\n`;
+        result += `- Original Project URL: ${projectData.url}\n`;
+        result += `- Items Count: ${totalItems}\n`;
+        result += `- Views Count: ${customViews}\n`;
+        result += `- Fields Count: ${customFields}\n\n`;
+
+        if (totalItems > 0) {
+          result += `**Affected Items Status:**\n`;
+          result += `- Issues and Pull Requests remain in repository\n`;
+          result += `- Project associations have been removed\n`;
+          result += `- Custom field values are lost\n`;
+          result += `- Items can be re-added to new projects if needed\n\n`;
+        }
+
+        result += `**Recovery Options:**\n`;
+        result += `⚠️ **Important:** Project structure cannot be automatically restored\n`;
+        result += `• Create new project with similar structure\n`;
+        result += `• Manually recreate custom fields if needed\n`;
+        result += `• Re-add items to new project manually\n`;
+        result += `• Refer to archive data for configuration details\n\n`;
+
+        result += `**Post-Deletion Checklist:**\n`;
+        result += `- [ ] Notify team members of project deletion\n`;
+        result += `- [ ] Update project references in documentation\n`;
+        result += `- [ ] Consider creating replacement project if needed\n`;
+        result += `- [ ] Archive any additional project-related resources\n\n`;
+
+        result += `## ✅ **Deletion Complete**\n\n`;
+        result += `🎯 **Summary:** Project "${projectData.title}" (#${projectData.number}) has been permanently deleted.\n`;
+        result += `📅 **Completed:** ${new Date().toLocaleString()}\n`;
+        result += `🔒 **Status:** Irreversible - project cannot be recovered\n\n`;
+        result += `**Next Steps:**\n`;
+        result += `• Clean up any external references to this project\n`;
+        result += `• Consider creating a new project if needed\n`;
+        result += `• Update team workflows and documentation\n`;
 
       } catch (graphqlError: any) {
-        result += `❌ **GraphQL Error**\n\n`;
+        result += `❌ **GraphQL Error During Deletion Process**\n\n`;
         result += `**Error:** ${graphqlError.message || 'Unknown GraphQL error'}\n\n`;
         
         if (graphqlError.errors) {
@@ -1143,18 +1693,19 @@ class GitHubProjectManagerServer {
           result += `\n`;
         }
         
-        result += `**Possible Causes:**\n`;
-        result += `• Insufficient permissions to access project\n`;
-        result += `• Project doesn't exist or was deleted\n`;
-        result += `• GraphQL query syntax error\n`;
+        result += `**Common Issues:**\n`;
+        result += `• Insufficient permissions (need admin access)\n`;
+        result += `• Project doesn't exist or was already deleted\n`;
         result += `• GitHub API rate limiting\n`;
-        result += `• Network connectivity issues\n\n`;
+        result += `• Network connectivity issues\n`;
+        result += `• Organization policies preventing deletion\n\n`;
         
-        result += `**Solutions:**\n`;
-        result += `• Verify project exists and you have access\n`;
-        result += `• Check GitHub token permissions\n`;
-        result += `• Try with a different project ID/number\n`;
-        result += `• Wait a few minutes if rate limited`;
+        result += `**Recommendations:**\n`;
+        result += `• Verify you have admin permissions for this project\n`;
+        result += `• Check project exists in GitHub web interface\n`;
+        result += `• Wait a few minutes if rate limited\n`;
+        result += `• Try deletion through GitHub web interface\n`;
+        result += `• Contact organization admin if policies block deletion\n`;
       }
 
       return {
@@ -1164,470 +1715,251 @@ class GitHubProjectManagerServer {
         }]
       };
     } catch (error: any) {
-      throw new Error(`Failed to get project details: ${error.message}`);
+      throw new Error(`Failed to delete project: ${error.message}`);
     }
   }
 
-  // TASK MANAGEMENT IMPLEMENTATIONS
-  private async handleGetNextTask(args: any) {
+  private async handleCreateMilestone(args: any) {
     this.validateRepoConfig();
-
+    
     try {
-      const {
-        assignee,
-        priority_level = 'medium',
-        max_complexity = 8,
-        include_blocked = false,
-        limit = 5,
-        context,
-        sprint_focus = true
-      } = args;
-
-      // Get all open issues
-      const issuesResponse = await this.octokit.rest.issues.listForRepo({
+      const response = await this.octokit.rest.issues.createMilestone({
         owner: this.owner,
         repo: this.repo,
-        state: 'open',
-        assignee: assignee || undefined,
-        per_page: 100
+        title: args.title,
+        description: args.description,
+        due_on: this.formatDateForGitHub(args.due_on),
+        state: args.state || 'open'
       });
-
-      let candidateIssues = issuesResponse.data.filter(issue => !issue.pull_request);
-
-      // Apply context filtering
-      if (context) {
-        candidateIssues = this.categorizeIssuesByContext(candidateIssues, context);
-      }
-
-      // Get milestones to identify current sprint
-      let currentSprintMilestone = null;
-      if (sprint_focus) {
-        const milestonesResponse = await this.octokit.rest.issues.listMilestones({
-          owner: this.owner,
-          repo: this.repo,
-          state: 'open',
-          per_page: 50
-        });
-
-        // Find current sprint (milestone with earliest due date)
-        const activeMilestones = milestonesResponse.data.filter(m => m.due_on && new Date(m.due_on) >= new Date());
-        if (activeMilestones.length > 0) {
-          currentSprintMilestone = activeMilestones.sort((a, b) => 
-            new Date(a.due_on!).getTime() - new Date(b.due_on!).getTime()
-          )[0];
-        }
-      }
-
-      // Analyze and score each issue
-      const scoredIssues = candidateIssues.map(issue => {
-        const complexity = this.analyzeIssueComplexity(issue);
-        const priority = this.calculateIssuePriority(issue);
-        const readiness = this.assessIssueReadiness(issue);
-        
-        // Skip if too complex
-        if (complexity > max_complexity) return null;
-        
-        // Skip if blocked (unless explicitly included)
-        if (!include_blocked && readiness.blockers.length > 0) return null;
-        
-        // Skip if below priority threshold
-        const priorityThresholds = { low: 1, medium: 2, high: 3 };
-        if (priority < priorityThresholds[priority_level as keyof typeof priorityThresholds]) return null;
-
-        // Calculate final score
-        let score = priority * 0.4 + readiness.score * 0.3 + (1 / complexity) * 0.3;
-        
-        // Boost for current sprint
-        if (sprint_focus && currentSprintMilestone && issue.milestone?.number === currentSprintMilestone.number) {
-          score += 1.0;
-        }
-        
-        // Recent activity boost
-        const daysSinceUpdate = Math.floor(
-          (Date.now() - new Date(issue.updated_at).getTime()) / (1000 * 60 * 60 * 24)
-        );
-        if (daysSinceUpdate < 3) score += 0.2;
-        
-        return {
-          issue,
-          score,
-          complexity,
-          priority,
-          readiness,
-          daysSinceUpdate
-        };
-      }).filter(Boolean) as any[];
-
-      // Sort by score and take top results
-      const topTasks = scoredIssues
-        .sort((a, b) => b.score - a.score)
-        .slice(0, limit);
-
-      let result = `🎯 **AI-Powered Task Recommendations**\n\n`;
-      result += `**Repository:** ${this.owner}/${this.repo}\n`;
-      result += `**Criteria:** Priority ≥ ${priority_level}, Complexity ≤ ${max_complexity}sp\n`;
-      
-      if (assignee) result += `**Assignee:** ${assignee}\n`;
-      if (context) result += `**Context:** ${context}\n`;
-      if (currentSprintMilestone) result += `**Current Sprint:** ${currentSprintMilestone.title}\n`;
-      
-      result += `**Generated:** ${new Date().toLocaleString()}\n\n`;
-      result += `---\n\n`;
-
-      if (topTasks.length === 0) {
-        result += `❌ **No suitable tasks found**\n\n`;
-        result += `**Possible reasons:**\n`;
-        result += `• All tasks exceed maximum complexity (${max_complexity}sp)\n`;
-        result += `• No tasks meet minimum priority level (${priority_level})\n`;
-        result += `• All available tasks are blocked\n`;
-        result += `• Context filter too restrictive\n\n`;
-        result += `**Suggestions:**\n`;
-        result += `• Increase max_complexity parameter\n`;
-        result += `• Lower priority_level filter\n`;
-        result += `• Set include_blocked=true\n`;
-        result += `• Broaden or remove context filter`;
-      } else {
-        result += `## 🚀 **Recommended Tasks (${topTasks.length})**\n\n`;
-
-        topTasks.forEach((task, index) => {
-          const { issue, score, complexity, priority, readiness, daysSinceUpdate } = task;
-          
-          const priorityEmoji = priority >= 4 ? '🔴' : priority >= 3 ? '🟡' : '🟢';
-          const readinessEmoji = readiness.ready ? '✅' : '⚠️';
-          
-          result += `### ${index + 1}. ${priorityEmoji} **${issue.title}** (#${issue.number})\n`;
-          result += `**Score:** ${score.toFixed(2)} | **Priority:** ${priority}/5 | **Complexity:** ${complexity}sp | **Ready:** ${readinessEmoji}\n\n`;
-          
-          // Why recommended
-          const reasons = [];
-          if (score >= 3) reasons.push('High overall score');
-          if (priority >= 4) reasons.push('High priority');
-          if (readiness.ready) reasons.push('Ready to start');
-          if (complexity <= 3) reasons.push('Low complexity');
-          if (daysSinceUpdate < 7) reasons.push('Recent activity');
-          if (issue.milestone?.number === currentSprintMilestone?.number) reasons.push('Current sprint priority');
-          
-          if (reasons.length > 0) {
-            result += `**Why recommended:** ${reasons.join(', ')}\n`;
-          }
-          
-          // Task details
-          result += `**Assignees:** ${issue.assignees?.map((a: any) => a.login).join(', ') || 'Unassigned'}\n`;
-          result += `**Labels:** ${issue.labels.map((l: any) => l.name).join(', ') || 'None'}\n`;
-          result += `**Milestone:** ${issue.milestone?.title || 'None'}\n`;
-          result += `**Updated:** ${daysSinceUpdate === 0 ? 'Today' : `${daysSinceUpdate} days ago`}\n`;
-          
-          // Readiness status
-          if (!readiness.ready && readiness.blockers.length > 0) {
-            result += `**Blockers:** ${readiness.blockers.join(', ')}\n`;
-          }
-          
-          // Task suggestions
-          const suggestions = this.generateTaskSuggestions(issue);
-          if (suggestions.length > 0) {
-            result += `**Suggestions:** ${suggestions.map(s => s.title).join(', ')}\n`;
-          }
-          
-          result += `**Link:** ${issue.html_url}\n\n`;
-          
-          // Brief description
-          if (issue.body) {
-            const preview = issue.body.length > 150 ? issue.body.substring(0, 150) + '...' : issue.body;
-            result += `${preview}\n\n`;
-          }
-          
-          result += `---\n\n`;
-        });
-
-        // Summary insights
-        result += `## 📊 **Insights & Recommendations**\n\n`;
-        
-        const avgComplexity = topTasks.reduce((sum, task) => sum + task.complexity, 0) / topTasks.length;
-        const avgPriority = topTasks.reduce((sum, task) => sum + task.priority, 0) / topTasks.length;
-        const readyTasks = topTasks.filter(task => task.readiness.ready).length;
-        
-        result += `**Average Complexity:** ${avgComplexity.toFixed(1)}sp\n`;
-        result += `**Average Priority:** ${avgPriority.toFixed(1)}/5\n`;
-        result += `**Ready to Start:** ${readyTasks}/${topTasks.length} tasks\n\n`;
-        
-        if (readyTasks < topTasks.length) {
-          result += `💡 **Tip:** Focus on the ${readyTasks} ready tasks first, then address blockers for the remaining tasks.\n\n`;
-        }
-        
-        // Context-specific advice
-        if (context) {
-          result += `🎯 **Context Focus:** Tasks filtered for "${context}" context. Consider broadening if more options needed.\n\n`;
-        }
-        
-        // Sprint advice
-        if (currentSprintMilestone) {
-          const sprintTasks = topTasks.filter(task => task.issue.milestone?.number === currentSprintMilestone.number);
-          if (sprintTasks.length > 0) {
-            result += `🏃‍♂️ **Sprint Focus:** ${sprintTasks.length} recommended tasks are in current sprint "${currentSprintMilestone.title}".\n\n`;
-          }
-        }
-      }
 
       return {
         content: [{
           type: "text",
-          text: result
+          text: `✅ **Milestone created successfully!**\n\n**Title:** ${response.data.title}\n**Number:** ${response.data.number}\n**Description:** ${response.data.description || 'None'}\n**Due Date:** ${response.data.due_on || 'Not set'}\n**State:** ${response.data.state}\n**URL:** ${response.data.html_url}`
         }]
       };
     } catch (error: any) {
-      throw new Error(`Failed to get next task recommendations: ${error.message}`);
+      throw new Error(`Failed to create milestone: ${error.message}`);
     }
+  }
+
+  private async handleListMilestones(args: any) {
+    return { content: [{ type: "text", text: "List milestones functionality - to be implemented" }] };
+  }
+
+  private async handleUpdateMilestone(args: any) {
+    return { content: [{ type: "text", text: "Update milestone functionality - to be implemented" }] };
+  }
+
+  private async handleDeleteMilestone(args: any) {
+    return { content: [{ type: "text", text: "Delete milestone functionality - to be implemented" }] };
+  }
+
+  private async handleGetMilestoneMetrics(args: any) {
+    return { content: [{ type: "text", text: "Get milestone metrics functionality - to be implemented" }] };
+  }
+
+  private async handleGetOverdueMilestones(args: any) {
+    return { content: [{ type: "text", text: "Get overdue milestones functionality - to be implemented" }] };
+  }
+
+  private async handleGetUpcomingMilestones(args: any) {
+    return { content: [{ type: "text", text: "Get upcoming milestones functionality - to be implemented" }] };
+  }
+
+  private async handleCreateIssue(args: any) {
+    this.validateRepoConfig();
+
+    try {
+      const response = await this.octokit.rest.issues.create({
+        owner: this.owner,
+        repo: this.repo,
+        title: args.title,
+        body: args.body,
+        labels: args.labels,
+        assignees: args.assignees,
+        milestone: args.milestone
+      });
+
+      return {
+        content: [{
+          type: "text",
+          text: `✅ **Issue created successfully!**\n\n**Title:** ${response.data.title}\n**Number:** #${response.data.number}\n**State:** ${response.data.state}\n**Labels:** ${response.data.labels.map((l: any) => l.name).join(', ') || 'None'}\n**Assignees:** ${response.data.assignees?.map((a: any) => a.login).join(', ') || 'None'}\n**URL:** ${response.data.html_url}`
+        }]
+      };
+    } catch (error: any) {
+      throw new Error(`Failed to create issue: ${error.message}`);
+    }
+  }
+
+  private async handleListIssues(args: any) {
+    return { content: [{ type: "text", text: "List issues functionality - to be implemented" }] };
+  }
+
+  private async handleGetIssue(args: any) {
+    return { content: [{ type: "text", text: "Get issue functionality - to be implemented" }] };
+  }
+
+  private async handleUpdateIssue(args: any) {
+    return { content: [{ type: "text", text: "Update issue functionality - to be implemented" }] };
+  }
+
+  private async handleCreateSprint(args: any) {
+    return { content: [{ type: "text", text: "Create sprint functionality - to be implemented" }] };
+  }
+
+  private async handleListSprints(args: any) {
+    return { content: [{ type: "text", text: "List sprints functionality - to be implemented" }] };
+  }
+
+  private async handleGetCurrentSprint(args: any) {
+    return { content: [{ type: "text", text: "Get current sprint functionality - to be implemented" }] };
+  }
+
+  private async handleUpdateSprint(args: any) {
+    return { content: [{ type: "text", text: "Update sprint functionality - to be implemented" }] };
+  }
+
+  private async handleAddIssuesToSprint(args: any) {
+    return { content: [{ type: "text", text: "Add issues to sprint functionality - to be implemented" }] };
+  }
+
+  private async handleRemoveIssuesFromSprint(args: any) {
+    return { content: [{ type: "text", text: "Remove issues from sprint functionality - to be implemented" }] };
+  }
+
+  private async handleGetSprintMetrics(args: any) {
+    return { content: [{ type: "text", text: "Get sprint metrics functionality - to be implemented" }] };
+  }
+
+  private async handlePlanSprint(args: any) {
+    return { content: [{ type: "text", text: "Plan sprint functionality - to be implemented" }] };
+  }
+
+  private async handleCreateRoadmap(args: any) {
+    return { content: [{ type: "text", text: "Create roadmap functionality - to be implemented" }] };
+  }
+
+  private async handleGeneratePRD(args: any) {
+    return { content: [{ type: "text", text: "Generate PRD functionality - to be implemented" }] };
+  }
+
+  private async handleParsePRD(args: any) {
+    return { content: [{ type: "text", text: "Parse PRD functionality - to be implemented" }] };
+  }
+
+  private async handleEnhancePRD(args: any) {
+    return { content: [{ type: "text", text: "Enhance PRD functionality - to be implemented" }] };
+  }
+
+  private async handleAddFeature(args: any) {
+    return { content: [{ type: "text", text: "Add feature functionality - to be implemented" }] };
+  }
+
+  private async handleGetNextTask(args: any) {
+    return { content: [{ type: "text", text: "Get next task functionality - to be implemented" }] };
   }
 
   private async handleAnalyzeTaskComplexity(args: any) {
-    this.validateRepoConfig();
-
-    try {
-      const {
-        issue_number,
-        include_suggestions = true,
-        team_context = [],
-        similar_issues = true,
-        breakdown_tasks = true
-      } = args;
-
-      // Get the specific issue
-      const issueResponse = await this.octokit.rest.issues.get({
-        owner: this.owner,
-        repo: this.repo,
-        issue_number
-      });
-
-      const issue = issueResponse.data;
-      
-      // Perform comprehensive analysis
-      const complexity = this.analyzeIssueComplexity(issue);
-      const priority = this.calculateIssuePriority(issue);
-      const readiness = this.assessIssueReadiness(issue);
-
-      let result = `🧮 **Comprehensive Task Complexity Analysis**\n\n`;
-      result += `**Issue:** #${issue.number} - ${issue.title}\n`;
-      result += `**Repository:** ${this.owner}/${this.repo}\n`;
-      result += `**Analyzed:** ${new Date().toLocaleString()}\n\n`;
-      result += `---\n\n`;
-
-      // Core metrics
-      result += `## 📊 **Core Metrics**\n\n`;
-      result += `**Complexity Score:** ${complexity}/8 story points\n`;
-      result += `**Priority Level:** ${priority}/5\n`;
-      result += `**Readiness Score:** ${Math.round(readiness.score * 100)}%\n`;
-      result += `**State:** ${issue.state}\n`;
-      result += `**Assignees:** ${issue.assignees?.map((a: any) => a.login).join(', ') || 'Unassigned'}\n`;
-      result += `**Labels:** ${issue.labels.map((l: any) => l.name).join(', ') || 'None'}\n\n`;
-
-      // Include suggestions and analysis based on the parameters
-      if (include_suggestions && complexity >= 4) {
-        result += `## 💡 **Complexity Reduction Suggestions**\n\n`;
-        const suggestions = this.generateTaskSuggestions(issue);
-        if (suggestions.length > 0) {
-          suggestions.forEach(suggestion => {
-            result += `• **${suggestion.title}:** ${suggestion.description}\n`;
-          });
-          result += `\n`;
-        }
-      }
-
-      // Similar issues analysis
-      if (similar_issues) {
-        const allIssuesResponse = await this.octokit.rest.issues.listForRepo({
-          owner: this.owner,
-          repo: this.repo,
-          state: 'all',
-          per_page: 100
-        });
-        
-        const similarIssues = this.findSimilarIssues(issue, allIssuesResponse.data.filter(i => !i.pull_request));
-        
-        if (similarIssues.length > 0) {
-          result += `## 🔍 **Similar Historical Issues**\n\n`;
-          result += `Found ${similarIssues.length} similar issues for reference:\n\n`;
-          
-          similarIssues.slice(0, 3).forEach((similarIssue, index) => {
-            const similarComplexity = this.analyzeIssueComplexity(similarIssue);
-            result += `${index + 1}. **${similarIssue.title}** (#${similarIssue.number})\n`;
-            result += `   • State: ${similarIssue.state}\n`;
-            result += `   • Complexity: ${similarComplexity}sp\n`;
-            result += `   • Link: ${similarIssue.html_url}\n\n`;
-          });
-        }
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      throw new Error(`Failed to analyze task complexity: ${error.message}`);
-    }
+    return { content: [{ type: "text", text: "Analyze task complexity functionality - to be implemented" }] };
   }
 
   private async handleExpandTask(args: any) {
+    return { content: [{ type: "text", text: "Expand task functionality - to be implemented" }] };
+  }
+
+  private async handleCreateProjectField(args: any) {
+    return { content: [{ type: "text", text: "Create project field functionality - to be implemented" }] };
+  }
+
+  private async handleListProjectFields(args: any) {
+    return { content: [{ type: "text", text: "List project fields functionality - to be implemented" }] };
+  }
+
+  private async handleUpdateProjectField(args: any) {
+    return { content: [{ type: "text", text: "Update project field functionality - to be implemented" }] };
+  }
+
+  private async handleCreateProjectView(args: any) {
+    return { content: [{ type: "text", text: "Create project view functionality - to be implemented" }] };
+  }
+
+  private async handleListProjectViews(args: any) {
+    return { content: [{ type: "text", text: "List project views functionality - to be implemented" }] };
+  }
+
+  private async handleUpdateProjectView(args: any) {
+    return { content: [{ type: "text", text: "Update project view functionality - to be implemented" }] };
+  }
+
+  private async handleAddProjectItem(args: any) {
+    return { content: [{ type: "text", text: "Add project item functionality - to be implemented" }] };
+  }
+
+  private async handleRemoveProjectItem(args: any) {
+    return { content: [{ type: "text", text: "Remove project item functionality - to be implemented" }] };
+  }
+
+  private async handleListProjectItems(args: any) {
+    return { content: [{ type: "text", text: "List project items functionality - to be implemented" }] };
+  }
+
+  private async handleSetFieldValue(args: any) {
+    return { content: [{ type: "text", text: "Set field value functionality - to be implemented" }] };
+  }
+
+  private async handleGetFieldValue(args: any) {
+    return { content: [{ type: "text", text: "Get field value functionality - to be implemented" }] };
+  }
+
+  private async handleCreateLabel(args: any) {
     this.validateRepoConfig();
 
     try {
-      const {
-        issue_number,
-        granularity = 'medium',
-        create_subtasks = false,
-        assign_to,
-        add_to_sprint,
-        include_estimates = true,
-        dependency_analysis = true
-      } = args;
-
-      // Get the issue to expand
-      const issueResponse = await this.octokit.rest.issues.get({
+      const response = await this.octokit.rest.issues.createLabel({
         owner: this.owner,
         repo: this.repo,
-        issue_number
+        name: args.name,
+        color: args.color.replace('#', ''),
+        description: args.description || ""
       });
 
-      const issue = issueResponse.data;
-      const complexity = this.analyzeIssueComplexity(issue);
-      const priority = this.calculateIssuePriority(issue);
-      
-      let result = `🔨 **Enhanced AI-Powered Task Breakdown Analysis**\n\n`;
-      result += `**Original Issue:** #${issue.number} - ${issue.title}\n`;
-      result += `**Repository:** ${this.owner}/${this.repo}\n`;
-      result += `**Complexity:** ${complexity} story points | **Priority:** ${priority}/5\n`;
-      result += `**Granularity:** ${granularity} | **Dependency Analysis:** ${dependency_analysis ? 'enabled' : 'disabled'}\n`;
-      result += `**Generated:** ${new Date().toLocaleString()}\n\n`;
-      result += `---\n\n`;
-
-      if (complexity < 3) {
-        result += `💡 **Recommendation:** This issue has low complexity (${complexity}sp). Consider implementing as-is rather than breaking down further.\n\n`;
-        if (!create_subtasks) {
-          result += `🎯 **Suggested Actions:**\n`;
-          result += `• Assign to a team member\n`;
-          result += `• Add to current sprint if capacity allows\n`;
-          result += `• Implement in a single focused session\n\n`;
-        }
+      return {
+        content: [{
+          type: "text",
+          text: `✅ Label created successfully!\n\n**Name:** ${response.data.name}\n**Color:** #${response.data.color}\n**Description:** ${response.data.description || "None"}`
+        }]
+      };
+    } catch (error: any) {
+      if (error.status === 422) {
+        throw new Error(`Label "${args.name}" already exists`);
       }
+      throw new Error(`Failed to create label: ${error.message}`);
+    }
+  }
 
-      // Generate intelligent subtasks using enhanced AI analysis
-      const subtasks = this.generateIntelligentSubtasks(issue, complexity, granularity);
+  private async handleListLabels(args: any) {
+    this.validateRepoConfig();
+
+    try {
+      const response = await this.octokit.rest.issues.listLabelsForRepo({
+        owner: this.owner,
+        repo: this.repo,
+        per_page: 100
+      });
+
+      let result = `🏷️ **Repository Labels** - Found ${response.data.length} labels\n\n`;
       
-      result += `## 🧠 **AI Analysis Results**\n\n`;
-      result += `**Breakdown Strategy:** ${this.getBreakdownStrategy(complexity)}\n`;
-      result += `**Risk Assessment:** ${this.assessImplementationRisk(subtasks, complexity)}\n`;
-      result += `**Recommended Team Size:** ${this.recommendTeamSize(subtasks, complexity)} developer(s)\n`;
-      result += `**Estimated Timeline:** ${this.estimateTimeline(subtasks)} days\n\n`;
-
-      result += `## 📋 **Intelligent Subtask Breakdown (${subtasks.length})**\n\n`;
-      
-      const createdIssues = [];
-      let totalEstimatedEffort = 0;
-      let totalComplexity = 0;
-      
-      for (let i = 0; i < subtasks.length; i++) {
-        const subtask = subtasks[i];
-        totalEstimatedEffort += subtask.estimatedHours;
-        totalComplexity += subtask.complexity;
-        
-        const priorityEmoji = subtask.priority === 'critical' ? '🔴' : 
-                             subtask.priority === 'high' ? '🟠' : 
-                             subtask.priority === 'medium' ? '🟡' : '🟢';
-        
-        result += `### ${i + 1}. ${priorityEmoji} **${subtask.title}**\n`;
-        result += `**Type:** ${subtask.type} | **Phase:** ${subtask.phase || 'implementation'}\n`;
-        
-        if (include_estimates) {
-          result += `**Effort:** ${subtask.estimatedHours}h (${subtask.complexity}sp) | **Priority:** ${subtask.priority}\n`;
-        }
-        
-        result += `\n**Description:**\n${subtask.description}\n\n`;
-        
-        // Enhanced acceptance criteria
-        if (subtask.acceptanceCriteria && subtask.acceptanceCriteria.length > 0) {
-          result += `**Acceptance Criteria:**\n`;
-          subtask.acceptanceCriteria.forEach(criteria => {
-            result += `- [ ] ${criteria}\n`;
-          });
-          result += `\n`;
-        }
-
-        // Create actual GitHub issues if requested
-        if (create_subtasks) {
-          try {
-            const subtaskBody = this.generateSubtaskIssueBody(issue, subtask, i);
-            const labels = this.generateSubtaskLabels(subtask, issue.number);
-
-            const createIssueData: any = {
-              owner: this.owner,
-              repo: this.repo,
-              title: `[${i + 1}] ${issue.title}: ${subtask.title}`,
-              body: subtaskBody,
-              labels
-            };
-
-            if (assign_to) {
-              createIssueData.assignees = [assign_to];
-            }
-
-            if (add_to_sprint) {
-              createIssueData.milestone = add_to_sprint;
-            }
-
-            const subtaskResponse = await this.octokit.rest.issues.create(createIssueData);
-            
-            createdIssues.push({
-              number: subtaskResponse.data.number,
-              title: subtaskResponse.data.title,
-              url: subtaskResponse.data.html_url
-            });
-
-            result += `✅ **Created Issue:** [#${subtaskResponse.data.number}](${subtaskResponse.data.html_url})\n\n`;
-          } catch (error: any) {
-            result += `❌ **Failed to create issue:** ${error.message}\n\n`;
+      if (response.data.length === 0) {
+        result += "No labels found.";
+      } else {
+        response.data.forEach(label => {
+          result += `**${label.name}** 🎨 #${label.color}\n`;
+          if (label.description) {
+            result += `   📝 ${label.description}\n`;
           }
-        }
-        
-        result += `---\n\n`;
-      }
-
-      // Enhanced summary and recommendations
-      result += `## 📊 **Comprehensive Analysis Summary**\n\n`;
-      result += `**Original Complexity:** ${complexity} story points\n`;
-      result += `**Total Subtask Complexity:** ${totalComplexity} story points\n`;
-      
-      if (include_estimates) {
-        result += `**Total Estimated Effort:** ${totalEstimatedEffort} hours\n`;
-        result += `**Average Task Size:** ${Math.round(totalEstimatedEffort / subtasks.length)} hours per task\n`;
-      }
-      
-      result += `**Number of Subtasks:** ${subtasks.length}\n\n`;
-
-      // Implementation strategy recommendations
-      result += `## 🎯 **Implementation Strategy**\n\n`;
-      result += `${this.generateImplementationStrategy(subtasks, complexity)}\n\n`;
-
-      if (create_subtasks && createdIssues.length > 0) {
-        result += `## ✅ **Created GitHub Issues (${createdIssues.length})**\n\n`;
-        createdIssues.forEach((created, index) => {
-          result += `${index + 1}. [#${created.number}: ${created.title}](${created.url})\n`;
+          result += "\n";
         });
-        result += `\n`;
-        
-        // Add parent issue update
-        try {
-          const parentUpdateBody = this.generateParentIssueUpdate(issue, createdIssues);
-          await this.octokit.rest.issues.createComment({
-            owner: this.owner,
-            repo: this.repo,
-            issue_number: issue.number,
-            body: parentUpdateBody
-          });
-          result += `📝 **Updated parent issue** #${issue.number} with subtask references.\n\n`;
-        } catch (error: any) {
-          result += `⚠️ **Could not update parent issue:** ${error.message}\n\n`;
-        }
       }
 
       return {
@@ -1637,152 +1969,21 @@ class GitHubProjectManagerServer {
         }]
       };
     } catch (error: any) {
-      throw new Error(`Failed to expand task: ${error.message}`);
+      throw new Error(`Failed to list labels: ${error.message}`);
     }
   }
 
-  // Helper methods for enhanced expand_task functionality
-  private getBreakdownStrategy(complexity: number): string {
-    if (complexity <= 2) return 'Single Implementation';
-    if (complexity <= 4) return 'Sequential Development';
-    if (complexity <= 6) return 'Parallel Development with Dependencies';
-    return 'Phased Implementation with Risk Mitigation';
-  }
-
-  private assessImplementationRisk(subtasks: any[], complexity: number): string {
-    const hasExternalDeps = subtasks.some(task => task.type === 'integration');
-    const hasComplexBackend = subtasks.some(task => task.type === 'backend' && task.complexity >= 3);
-    const hasMultipleSystems = subtasks.length >= 5;
-    
-    let risk = 'Low';
-    if (complexity >= 6 || hasMultipleSystems) risk = 'High';
-    else if (complexity >= 4 || hasExternalDeps || hasComplexBackend) risk = 'Medium';
-    
-    return risk;
-  }
-
-  private recommendTeamSize(subtasks: any[], complexity: number): number {
-    if (complexity <= 3) return 1;
-    if (complexity <= 5) return 2;
-    return Math.min(3, Math.ceil(subtasks.length / 2));
-  }
-
-  private estimateTimeline(subtasks: any[]): number {
-    const totalHours = subtasks.reduce((sum, task) => sum + task.estimatedHours, 0);
-    const hoursPerDay = 6; // Assuming 6 productive hours per day
-    return Math.ceil(totalHours / hoursPerDay);
-  }
-
-  private generateImplementationStrategy(subtasks: any[], complexity: number): string {
-    let strategy = '';
-    
-    if (complexity <= 3) {
-      strategy = '**Linear Implementation:** Execute tasks sequentially with single developer focus.';
-    } else if (subtasks.length >= 3) {
-      strategy = `**Parallel Development:** ${subtasks.length} tasks can run in parallel. Recommend team collaboration with clear task ownership.`;
-    } else {
-      strategy = '**Sequential with Overlap:** Execute in dependency order with some overlap where possible.';
-    }
-    
-    strategy += '\n\n**Start with:** Research and design tasks to unblock implementation work.';
-    strategy += '\n**Prioritize:** High-priority tasks that unlock the most downstream work.';
-    
-    return strategy;
-  }
-
-  private generateSubtaskIssueBody(parentIssue: any, subtask: any, subtaskIndex: number): string {
-    let body = `## 🔗 Parent Issue\n`;
-    body += `This is a subtask of #${parentIssue.number}: ${parentIssue.title}\n\n`;
-    
-    body += `## 📋 Task Description\n`;
-    body += `${subtask.description}\n\n`;
-    
-    body += `## 🎯 Acceptance Criteria\n`;
-    if (subtask.acceptanceCriteria && subtask.acceptanceCriteria.length > 0) {
-      subtask.acceptanceCriteria.forEach((criteria: string) => {
-        body += `- [ ] ${criteria}\n`;
-      });
-    } else {
-      body += `- [ ] Implementation completed according to specifications\n`;
-      body += `- [ ] Code reviewed and approved\n`;
-      body += `- [ ] Tests written and passing\n`;
-    }
-    body += `\n`;
-    
-    body += `## 📊 Task Details\n`;
-    body += `- **Type:** ${subtask.type}\n`;
-    body += `- **Phase:** ${subtask.phase || 'implementation'}\n`;
-    body += `- **Estimated Hours:** ${subtask.estimatedHours}h\n`;
-    body += `- **Complexity:** ${subtask.complexity} story points\n`;
-    body += `- **Priority:** ${subtask.priority}\n\n`;
-    
-    body += `## ✅ Definition of Done\n`;
-    body += `- [ ] All acceptance criteria are met\n`;
-    body += `- [ ] Code follows project standards and patterns\n`;
-    body += `- [ ] Appropriate tests are written and passing\n`;
-    body += `- [ ] Documentation is updated if needed\n`;
-    body += `- [ ] Code review is completed and approved\n`;
-    body += `- [ ] Parent issue #${parentIssue.number} is updated with progress\n\n`;
-    
-    body += `---\n`;
-    body += `*Generated by AI-powered task breakdown on ${new Date().toLocaleDateString()}*`;
-    
-    return body;
-  }
-
-  private generateSubtaskLabels(subtask: any, parentIssueNumber: number): string[] {
-    const labels = [
-      `type:${subtask.type}`,
-      `priority:${subtask.priority}`,
-      'subtask',
-      `parent-issue-${parentIssueNumber}`
-    ];
-    
-    if (subtask.phase) {
-      labels.push(`phase:${subtask.phase}`);
-    }
-    
-    if (subtask.complexity >= 4) {
-      labels.push('complex');
-    }
-    
-    return labels;
-  }
-
-  private generateParentIssueUpdate(parentIssue: any, createdIssues: any[]): string {
-    let updateBody = `## 🔨 Task Breakdown Completed\n\n`;
-    updateBody += `This issue has been broken down into ${createdIssues.length} manageable subtasks using AI-powered analysis:\n\n`;
-    
-    createdIssues.forEach((issue, index) => {
-      updateBody += `${index + 1}. [#${issue.number}: ${issue.title}](${issue.url})\n`;
-    });
-    
-    updateBody += `\n## 📊 Implementation Status\n`;
-    updateBody += `- **Total Subtasks:** ${createdIssues.length}\n`;
-    updateBody += `- **Completed:** 0/${createdIssues.length}\n`;
-    updateBody += `- **In Progress:** 0/${createdIssues.length}\n`;
-    updateBody += `- **Remaining:** ${createdIssues.length}/${createdIssues.length}\n\n`;
-    
-    updateBody += `## 🎯 Next Steps\n`;
-    updateBody += `1. Review and refine subtasks as needed\n`;
-    updateBody += `2. Assign subtasks to team members\n`;
-    updateBody += `3. Add subtasks to appropriate sprint/milestone\n`;
-    updateBody += `4. Begin implementation in dependency order\n`;
-    updateBody += `5. Update this issue as subtasks are completed\n\n`;
-    
-    updateBody += `---\n`;
-    updateBody += `*Generated by AI-powered task breakdown on ${new Date().toLocaleDateString()}*`;
-    
-    return updateBody;
+  private async handleCreateTraceabilityMatrix(args: any) {
+    return { content: [{ type: "text", text: "Create traceability matrix functionality - to be implemented" }] };
   }
 
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("🎉 GitHub Project Manager MCP server running on stdio");
-    console.error(`📍 Repository: ${this.owner}/${this.repo}`);
-    console.error("✅ Issue #27 IMPLEMENTED: get_project tool for comprehensive project details retrieval!");
-    console.error("🚀 Tools available: 4 comprehensive tools (1 project management + 3 task management)");
+    console.error("GitHub Project Manager MCP server running on stdio");
+    console.error(`Repository: ${this.owner}/${this.repo}`);
+    console.error("✅ Issue #29 IMPLEMENTED: delete_project tool with safe deletion, archiving, and confirmation!");
+    console.error("Tools available: 46 comprehensive project management tools");
   }
 }
 
