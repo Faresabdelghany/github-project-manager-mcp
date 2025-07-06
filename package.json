@@ -1,7 +1,7 @@
 {
   "name": "github-project-manager",
-  "version": "3.2.0",
-  "description": "Comprehensive GitHub project management MCP server with PRD lifecycle support including enhance_prd tool for optimization",
+  "version": "4.0.0",
+  "description": "Comprehensive GitHub project management MCP server with get_project tool for detailed project analysis and AI-powered task management",
   "main": "build/index.js",
   "type": "module",
   "scripts": {
