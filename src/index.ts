@@ -465,11 +465,20 @@ class GitHubProjectManagerServer {
           },
           {
             name: 'delete_milestone',
-            description: 'Delete milestones',
+            description: 'Safely delete milestones with comprehensive data archiving, issue handling, and confirmation requirements',
             inputSchema: {
               type: 'object',
               properties: {
-                milestone_number: { type: 'number', description: 'Milestone number' }
+                milestone_number: { type: 'number', description: 'Milestone number to delete' },
+                confirm_deletion: { type: 'boolean', description: 'Required confirmation to proceed with permanent deletion (default: false)', default: false },
+                issue_action: { 
+                  type: 'string', 
+                  enum: ['remove', 'reassign'], 
+                  description: 'Action for associated issues: remove milestone or reassign to another milestone (default: remove)',
+                  default: 'remove'
+                },
+                target_milestone: { type: 'number', description: 'Target milestone number for issue reassignment (required if issue_action is reassign)' },
+                archive_data: { type: 'boolean', description: 'Create archive data before deletion (default: true)', default: true }
               },
               required: ['milestone_number']
             }
@@ -1991,7 +2000,582 @@ class GitHubProjectManagerServer {
   }
 
   private async handleDeleteMilestone(args: any) {
-    return { content: [{ type: "text", text: "Delete milestone functionality - to be implemented" }] };
+    this.validateRepoConfig();
+
+    try {
+      const { 
+        milestone_number, 
+        confirm_deletion = false, 
+        issue_action = 'remove', 
+        target_milestone, 
+        archive_data = true 
+      } = args;
+
+      if (!milestone_number) {
+        return {
+          content: [{
+            type: "text",
+            text: `❌ **Error: Missing Required Parameters**\n\n` +
+                  `\`milestone_number\` is required.\n\n` +
+                  `**Usage Example:**\n` +
+                  `\`delete_milestone({ milestone_number: 1, confirm_deletion: true })\``
+          }]
+        };
+      }
+
+      // Validate issue action and target milestone
+      if (issue_action === 'reassign' && !target_milestone) {
+        return {
+          content: [{
+            type: "text",
+            text: `❌ **Error: Missing Target Milestone**\n\n` +
+                  `When \`issue_action\` is "reassign", \`target_milestone\` must be provided.\n\n` +
+                  `**Usage Example:**\n` +
+                  `\`delete_milestone({ milestone_number: 1, issue_action: "reassign", target_milestone: 2, confirm_deletion: true })\``
+          }]
+        };
+      }
+
+      let result = `⚠️ **Milestone Deletion - Safety Protocol**\n\n`;
+      result += `**Repository:** ${this.owner}/${this.repo}\n`;
+      result += `**Milestone Number:** #${milestone_number}\n`;
+      result += `**Initiated:** ${new Date().toLocaleString()}\n\n`;
+      result += `---\n\n`;
+
+      let milestoneData: any = null;
+      let associatedIssues: any[] = [];
+      let archiveInfo: any = {};
+
+      try {
+        // Step 1: Retrieve milestone data and associated issues
+        result += `## 🔍 **Step 1: Milestone Data Retrieval & Analysis**\n\n`;
+
+        // Get milestone details
+        const milestoneResponse = await this.octokit.rest.issues.getMilestone({
+          owner: this.owner,
+          repo: this.repo,
+          milestone_number: milestone_number
+        });
+
+        milestoneData = milestoneResponse.data;
+
+        // Get all issues associated with this milestone
+        const issuesResponse = await this.octokit.rest.issues.listForRepo({
+          owner: this.owner,
+          repo: this.repo,
+          milestone: milestone_number.toString(),
+          state: 'all',
+          per_page: 100
+        });
+
+        associatedIssues = issuesResponse.data.filter(issue => !issue.pull_request);
+
+        // Check if this is a sprint milestone
+        const sprintData = this.parseSprintDescription(milestoneData.description || '');
+        const isSprintMilestone = sprintData && sprintData.type === 'sprint';
+
+        // Create archive data
+        if (archive_data) {
+          archiveInfo = {
+            timestamp: new Date().toISOString(),
+            milestone: {
+              number: milestoneData.number,
+              title: milestoneData.title,
+              description: milestoneData.description,
+              state: milestoneData.state,
+              due_on: milestoneData.due_on,
+              created_at: milestoneData.created_at,
+              updated_at: milestoneData.updated_at,
+              open_issues: milestoneData.open_issues,
+              closed_issues: milestoneData.closed_issues,
+              url: milestoneData.html_url,
+              creator: milestoneData.creator?.login,
+              is_sprint: isSprintMilestone,
+              sprint_data: sprintData
+            },
+            associated_issues: associatedIssues.map(issue => ({
+              number: issue.number,
+              title: issue.title,
+              state: issue.state,
+              assignees: issue.assignees?.map((a: any) => a.login) || [],
+              labels: issue.labels.map((l: any) => l.name),
+              created_at: issue.created_at,
+              updated_at: issue.updated_at,
+              url: issue.html_url
+            })),
+            statistics: {
+              total_issues: associatedIssues.length,
+              open_issues: associatedIssues.filter(issue => issue.state === 'open').length,
+              closed_issues: associatedIssues.filter(issue => issue.state === 'closed').length,
+              days_existed: Math.floor((Date.now() - new Date(milestoneData.created_at).getTime()) / (1000 * 60 * 60 * 24))
+            }
+          };
+        }
+
+        result += `✅ **Milestone Located and Analyzed**\n`;
+        result += `- **Title:** ${milestoneData.title}\n`;
+        result += `- **Number:** #${milestoneData.number}\n`;
+        result += `- **State:** ${milestoneData.state}\n`;
+        result += `- **Created:** ${new Date(milestoneData.created_at).toLocaleDateString()}\n`;
+        result += `- **Due Date:** ${milestoneData.due_on ? new Date(milestoneData.due_on).toLocaleDateString() : 'Not set'}\n`;
+        result += `- **Associated Issues:** ${associatedIssues.length} (${milestoneData.open_issues} open, ${milestoneData.closed_issues} closed)\n`;
+        
+        if (isSprintMilestone) {
+          result += `- **Sprint Type:** Sprint ${sprintData.sprintNumber}\n`;
+          result += `- **Sprint Duration:** ${sprintData.duration} days\n`;
+          result += `- **Sprint Goals:** ${sprintData.goals?.length || 0}\n`;
+        }
+        
+        result += `\n`;
+
+        // Step 2: Risk Assessment
+        result += `## ⚠️ **Step 2: Risk Assessment & Impact Analysis**\n\n`;
+
+        let riskLevel = 'LOW';
+        const risks = [];
+        const impacts = [];
+
+        // Assess risks based on milestone characteristics
+        if (associatedIssues.length > 20) {
+          riskLevel = 'HIGH';
+          risks.push(`Large milestone with ${associatedIssues.length} associated issues`);
+        } else if (associatedIssues.length > 5) {
+          riskLevel = 'MEDIUM';
+          risks.push(`Medium-sized milestone with ${associatedIssues.length} associated issues`);
+        }
+
+        const openIssues = associatedIssues.filter(issue => issue.state === 'open');
+        if (openIssues.length > 0) {
+          riskLevel = riskLevel === 'LOW' ? 'MEDIUM' : 'HIGH';
+          risks.push(`${openIssues.length} open issues will lose milestone association`);
+          impacts.push(`Open issues may become difficult to track without milestone context`);
+        }
+
+        if (milestoneData.state === 'open') {
+          risks.push('Active milestone being deleted');
+          impacts.push('Project planning and progress tracking will be affected');
+        }
+
+        if (isSprintMilestone) {
+          riskLevel = 'HIGH';
+          risks.push('This is a sprint milestone with structured sprint data');
+          impacts.push('Sprint planning and metrics will be lost');
+          impacts.push('Sprint retrospective data will be unavailable');
+        }
+
+        if (milestoneData.due_on) {
+          const dueDate = new Date(milestoneData.due_on);
+          const today = new Date();
+          if (dueDate > today) {
+            impacts.push(`Upcoming deadline (${dueDate.toLocaleDateString()}) will be lost`);
+          } else if (dueDate < today) {
+            impacts.push(`Historical deadline data (${dueDate.toLocaleDateString()}) will be lost`);
+          }
+        }
+
+        // Check for issue reassignment conflicts
+        if (issue_action === 'reassign' && target_milestone) {
+          try {
+            const targetMilestoneResponse = await this.octokit.rest.issues.getMilestone({
+              owner: this.owner,
+              repo: this.repo,
+              milestone_number: target_milestone
+            });
+            
+            if (targetMilestoneResponse.data.state === 'closed') {
+              risks.push(`Target milestone #${target_milestone} is closed`);
+              impacts.push('Issues will be reassigned to a closed milestone');
+            }
+          } catch (targetError: any) {
+            if (targetError.status === 404) {
+              return {
+                content: [{
+                  type: "text",
+                  text: `❌ **Error: Target Milestone Not Found**\n\n` +
+                        `Target milestone #${target_milestone} does not exist.\n\n` +
+                        `**Please choose a valid target milestone for issue reassignment.**`
+                }]
+              };
+            }
+          }
+        }
+
+        const riskEmoji = riskLevel === 'HIGH' ? '🔴' : riskLevel === 'MEDIUM' ? '🟡' : '🟢';
+        
+        result += `**Risk Level:** ${riskEmoji} **${riskLevel}**\n\n`;
+        
+        if (risks.length > 0) {
+          result += `**Risk Factors:**\n`;
+          risks.forEach(risk => {
+            result += `• ${risk}\n`;
+          });
+          result += `\n`;
+        }
+
+        if (impacts.length > 0) {
+          result += `**Expected Impacts:**\n`;
+          impacts.forEach(impact => {
+            result += `• ${impact}\n`;
+          });
+          result += `\n`;
+        }
+
+        result += `**Data Loss Warning:**\n`;
+        result += `🚨 **PERMANENT DELETION** - This action cannot be undone!\n`;
+        result += `• Milestone structure and metadata will be lost\n`;
+        result += `• Issue associations will be removed or reassigned\n`;
+        result += `• Progress tracking history will be lost\n`;
+        if (isSprintMilestone) {
+          result += `• Sprint planning data and metrics will be permanently deleted\n`;
+        }
+        result += `\n`;
+
+        // Step 3: Issue Handling Plan
+        result += `## 📋 **Step 3: Issue Handling Plan**\n\n`;
+        
+        if (associatedIssues.length === 0) {
+          result += `✅ **No Associated Issues** - Milestone can be safely deleted without affecting any issues.\n\n`;
+        } else {
+          result += `**Action:** ${issue_action === 'reassign' ? 'Reassign' : 'Remove milestone from'} ${associatedIssues.length} associated issues\n\n`;
+          
+          if (issue_action === 'reassign') {
+            result += `**Target Milestone:** #${target_milestone}\n`;
+            result += `**Reassignment Process:**\n`;
+            result += `1. Validate target milestone exists and is accessible\n`;
+            result += `2. Update each issue's milestone assignment\n`;
+            result += `3. Preserve issue history and comments\n`;
+            result += `4. Maintain issue state (open/closed)\n\n`;
+          } else {
+            result += `**Milestone Removal Process:**\n`;
+            result += `1. Remove milestone association from each issue\n`;
+            result += `2. Issues will return to unassigned/backlog state\n`;
+            result += `3. Issue history and comments are preserved\n`;
+            result += `4. Issues remain searchable and manageable\n\n`;
+          }
+
+          // Show issue breakdown
+          const openIssueCount = associatedIssues.filter(issue => issue.state === 'open').length;
+          const closedIssueCount = associatedIssues.filter(issue => issue.state === 'closed').length;
+          
+          result += `**Issue Breakdown:**\n`;
+          result += `- Open Issues: ${openIssueCount}\n`;
+          result += `- Closed Issues: ${closedIssueCount}\n`;
+          result += `- Total Issues: ${associatedIssues.length}\n\n`;
+
+          // Show sample issues
+          if (associatedIssues.length > 0) {
+            result += `**Sample Issues (first 5):**\n`;
+            associatedIssues.slice(0, 5).forEach((issue, index) => {
+              const stateEmoji = issue.state === 'open' ? '🟢' : '🔴';
+              result += `${index + 1}. ${stateEmoji} #${issue.number}: ${issue.title}\n`;
+            });
+            if (associatedIssues.length > 5) {
+              result += `... and ${associatedIssues.length - 5} more issues\n`;
+            }
+            result += `\n`;
+          }
+        }
+
+        // Confirmation check
+        if (!confirm_deletion) {
+          result += `## 🛑 **Step 4: Confirmation Required**\n\n`;
+          result += `**DELETION BLOCKED** - Safety confirmation required.\n\n`;
+          result += `To proceed with deletion, you must acknowledge the risks and impacts:\n\n`;
+          result += `\`\`\`\n`;
+          result += `delete_milestone({\n`;
+          result += `  milestone_number: ${milestone_number},\n`;
+          if (issue_action === 'reassign') {
+            result += `  issue_action: "reassign",\n`;
+            result += `  target_milestone: ${target_milestone},\n`;
+          } else {
+            result += `  issue_action: "remove",\n`;
+          }
+          result += `  confirm_deletion: true\n`;
+          result += `})\n`;
+          result += `\`\`\`\n\n`;
+
+          result += `**⚠️ WARNING:** Once confirmed, this milestone will be permanently deleted!\n\n`;
+          result += `**Pre-deletion Checklist:**\n`;
+          result += `- [ ] Milestone data has been backed up if needed\n`;
+          result += `- [ ] Team members have been notified of deletion\n`;
+          result += `- [ ] Alternative milestone arrangements are in place\n`;
+          if (isSprintMilestone) {
+            result += `- [ ] Sprint retrospective has been completed\n`;
+            result += `- [ ] Sprint data has been archived externally if needed\n`;
+          }
+          result += `- [ ] You understand this action is irreversible\n\n`;
+
+          // Include archive summary
+          if (archive_data) {
+            result += `## 📋 **Milestone Archive Summary**\n\n`;
+            result += `**Milestone Details:**\n`;
+            result += `- Title: ${milestoneData.title}\n`;
+            result += `- Description: ${milestoneData.description ? milestoneData.description.substring(0, 100) + (milestoneData.description.length > 100 ? '...' : '') : 'None'}\n`;
+            result += `- State: ${milestoneData.state}\n`;
+            result += `- Created: ${new Date(milestoneData.created_at).toLocaleDateString()}\n`;
+            result += `- Due Date: ${milestoneData.due_on ? new Date(milestoneData.due_on).toLocaleDateString() : 'Not set'}\n`;
+            result += `- Days Existed: ${archiveInfo.statistics.days_existed}\n\n`;
+
+            if (isSprintMilestone) {
+              result += `**Sprint Information:**\n`;
+              result += `- Sprint Number: ${sprintData.sprintNumber}\n`;
+              result += `- Duration: ${sprintData.duration} days\n`;
+              result += `- Start Date: ${sprintData.startDate}\n`;
+              result += `- End Date: ${sprintData.endDate}\n`;
+              if (sprintData.goals && sprintData.goals.length > 0) {
+                result += `- Goals: ${sprintData.goals.join(', ')}\n`;
+              }
+              result += `\n`;
+            }
+
+            result += `**Issue Statistics:**\n`;
+            result += `- Total Issues: ${associatedIssues.length}\n`;
+            result += `- Open Issues: ${archiveInfo.statistics.open_issues}\n`;
+            result += `- Closed Issues: ${archiveInfo.statistics.closed_issues}\n`;
+            if (associatedIssues.length > 0) {
+              const progress = Math.round((archiveInfo.statistics.closed_issues / associatedIssues.length) * 100);
+              result += `- Completion Rate: ${progress}%\n`;
+            }
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: result
+            }]
+          };
+        }
+
+        // Confirmed deletion - proceed with execution
+        result += `## 🔥 **Step 4: Confirmed Deletion in Progress**\n\n`;
+        result += `⚠️ **CONFIRMED DELETION** - Proceeding with permanent removal...\n\n`;
+
+        // Step 4a: Handle associated issues
+        if (associatedIssues.length > 0) {
+          result += `### 📝 **Issue Processing**\n\n`;
+          
+          let issueProcessingResults = [];
+          let successCount = 0;
+          let errorCount = 0;
+
+          for (const issue of associatedIssues) {
+            try {
+              if (issue_action === 'reassign') {
+                // Reassign issue to target milestone
+                await this.octokit.rest.issues.update({
+                  owner: this.owner,
+                  repo: this.repo,
+                  issue_number: issue.number,
+                  milestone: target_milestone
+                });
+                issueProcessingResults.push(`✅ #${issue.number}: Reassigned to milestone #${target_milestone}`);
+                successCount++;
+              } else {
+                // Remove milestone from issue
+                await this.octokit.rest.issues.update({
+                  owner: this.owner,
+                  repo: this.repo,
+                  issue_number: issue.number,
+                  milestone: null
+                });
+                issueProcessingResults.push(`✅ #${issue.number}: Milestone removed`);
+                successCount++;
+              }
+            } catch (issueError: any) {
+              issueProcessingResults.push(`❌ #${issue.number}: Failed - ${issueError.message}`);
+              errorCount++;
+            }
+          }
+
+          result += `**Issue Processing Results:**\n`;
+          result += `- Successful: ${successCount}/${associatedIssues.length}\n`;
+          result += `- Errors: ${errorCount}/${associatedIssues.length}\n\n`;
+
+          if (issueProcessingResults.length <= 10) {
+            // Show all results if not too many
+            issueProcessingResults.forEach(resultLine => {
+              result += `${resultLine}\n`;
+            });
+          } else {
+            // Show first few and summarize
+            issueProcessingResults.slice(0, 5).forEach(resultLine => {
+              result += `${resultLine}\n`;
+            });
+            result += `... and ${issueProcessingResults.length - 5} more results\n`;
+          }
+          
+          result += `\n`;
+
+          if (errorCount > 0) {
+            result += `⚠️ **Warning:** ${errorCount} issues could not be processed. The milestone will still be deleted, but these issues may retain their milestone association.\n\n`;
+          }
+        }
+
+        // Step 4b: Delete the milestone
+        result += `### 🗑️ **Milestone Deletion**\n\n`;
+        
+        try {
+          await this.octokit.rest.issues.deleteMilestone({
+            owner: this.owner,
+            repo: this.repo,
+            milestone_number: milestone_number
+          });
+
+          result += `✅ **Milestone Deleted Successfully**\n\n`;
+          result += `**Deleted Milestone:**\n`;
+          result += `- Title: ${milestoneData.title}\n`;
+          result += `- Number: #${milestoneData.number}\n`;
+          result += `- State: ${milestoneData.state}\n`;
+          result += `- Deletion Time: ${new Date().toLocaleString()}\n\n`;
+
+        } catch (deleteError: any) {
+          result += `❌ **Milestone Deletion Failed**\n\n`;
+          result += `**Error:** ${deleteError.message}\n\n`;
+          result += `**Possible Causes:**\n`;
+          result += `• Insufficient permissions to delete milestone\n`;
+          result += `• Milestone was already deleted by another user\n`;
+          result += `• GitHub API temporary issue\n`;
+          result += `• Repository access restrictions\n\n`;
+          
+          result += `**Current Status:**\n`;
+          if (associatedIssues.length > 0) {
+            result += `• Issues have been ${issue_action === 'reassign' ? 'reassigned' : 'unassigned'}\n`;
+          }
+          result += `• Milestone still exists but may be inaccessible\n`;
+          result += `• Archive data is preserved\n\n`;
+          
+          result += `**Recommendations:**\n`;
+          result += `• Verify you have admin permissions for this repository\n`;
+          result += `• Check if the milestone still exists in GitHub web interface\n`;
+          result += `• Try deletion through GitHub web interface\n`;
+          result += `• Contact repository admin if needed\n`;
+
+          return {
+            content: [{
+              type: "text",
+              text: result
+            }]
+          };
+        }
+
+        // Step 5: Final Report
+        result += `## 📊 **Step 5: Deletion Report & Recovery Information**\n\n`;
+        
+        result += `**Deletion Summary:**\n`;
+        result += `- Milestone: "${milestoneData.title}" (#${milestoneData.number})\n`;
+        result += `- Issues Processed: ${associatedIssues.length}\n`;
+        if (issue_action === 'reassign') {
+          result += `- Issues Reassigned to: Milestone #${target_milestone}\n`;
+        } else {
+          result += `- Issues Unassigned: ${associatedIssues.length}\n`;
+        }
+        result += `- Completion Time: ${new Date().toLocaleString()}\n\n`;
+
+        if (archive_data) {
+          result += `**Archive Information:**\n`;
+          result += `- Archive Created: ${archiveInfo.timestamp}\n`;
+          result += `- Original Milestone URL: ${milestoneData.html_url}\n`;
+          result += `- Days Existed: ${archiveInfo.statistics.days_existed}\n`;
+          if (isSprintMilestone) {
+            result += `- Sprint Data: Archived with full sprint metadata\n`;
+          }
+          result += `\n`;
+        }
+
+        result += `**Impact Assessment:**\n`;
+        if (associatedIssues.length > 0) {
+          if (issue_action === 'reassign') {
+            result += `✅ All issues have been reassigned to maintain project continuity\n`;
+          } else {
+            result += `⚠️ Issues are now unassigned and available in the backlog\n`;
+          }
+        } else {
+          result += `✅ No issues were affected by this deletion\n`;
+        }
+
+        if (isSprintMilestone) {
+          result += `⚠️ Sprint planning data has been permanently lost\n`;
+          result += `⚠️ Sprint metrics and retrospective data are no longer accessible\n`;
+        }
+
+        result += `✅ Milestone structure and progress tracking have been removed\n\n`;
+
+        result += `**Recovery Options:**\n`;
+        result += `❌ **Important:** Milestone cannot be automatically restored\n`;
+        result += `• Create new milestone with similar structure if needed\n`;
+        result += `• Use archived data to recreate milestone configuration\n`;
+        if (issue_action === 'remove' && associatedIssues.length > 0) {
+          result += `• Manually reassign issues to new milestone if needed\n`;
+        }
+        if (isSprintMilestone) {
+          result += `• Create new sprint milestone using archived sprint data\n`;
+        }
+        result += `• Update project documentation and references\n\n`;
+
+        result += `**Post-Deletion Checklist:**\n`;
+        result += `- [ ] Notify team members of milestone deletion\n`;
+        result += `- [ ] Update project planning documentation\n`;
+        result += `- [ ] Review and update any automated workflows referencing this milestone\n`;
+        if (isSprintMilestone) {
+          result += `- [ ] Update sprint planning processes\n`;
+          result += `- [ ] Archive sprint retrospective data externally\n`;
+        }
+        if (associatedIssues.length > 0 && issue_action === 'remove') {
+          result += `- [ ] Review unassigned issues and assign to appropriate milestones\n`;
+        }
+        result += `- [ ] Consider creating replacement milestone if needed\n\n`;
+
+        result += `## ✅ **Deletion Complete**\n\n`;
+        result += `🎯 **Summary:** Milestone "${milestoneData.title}" (#${milestoneData.number}) has been permanently deleted.\n`;
+        result += `📅 **Completed:** ${new Date().toLocaleString()}\n`;
+        result += `🔒 **Status:** Irreversible - milestone cannot be recovered\n\n`;
+        
+        result += `**Next Steps:**\n`;
+        result += `• Clean up any external references to this milestone\n`;
+        result += `• Update team workflows and documentation\n`;
+        if (associatedIssues.length > 0) {
+          result += `• Monitor ${issue_action === 'reassign' ? 'reassigned' : 'unassigned'} issues for proper handling\n`;
+        }
+        result += `• Consider creating new milestone structure if needed\n`;
+
+      } catch (fetchError: any) {
+        if (fetchError.status === 404) {
+          result += `❌ **Milestone Not Found**\n\n`;
+          result += `**Milestone #${milestone_number}** does not exist in repository \`${this.owner}/${this.repo}\`.\n\n`;
+          result += `**Possible Issues:**\n`;
+          result += `• Milestone number is incorrect\n`;
+          result += `• Milestone was already deleted\n`;
+          result += `• Insufficient permissions to access milestone\n`;
+          result += `• Wrong repository specified\n\n`;
+          result += `**Recommendations:**\n`;
+          result += `• Verify milestone number using 'list_milestones'\n`;
+          result += `• Check milestone exists in GitHub web interface\n`;
+          result += `• Ensure you have repository access permissions\n`;
+        } else {
+          result += `❌ **Error During Milestone Retrieval**\n\n`;
+          result += `**Error:** ${fetchError.message}\n\n`;
+          result += `**Possible Causes:**\n`;
+          result += `• Network connectivity issues\n`;
+          result += `• GitHub API rate limiting\n`;
+          result += `• Insufficient repository permissions\n`;
+          result += `• Temporary GitHub service issues\n\n`;
+          result += `**Recommendations:**\n`;
+          result += `• Wait a few minutes and try again\n`;
+          result += `• Verify repository access permissions\n`;
+          result += `• Check GitHub status page for service issues\n`;
+        }
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: result
+        }]
+      };
+
+    } catch (error: any) {
+      throw new Error(`Failed to delete milestone: ${error.message}`);
+    }
   }
 
   private async handleGetMilestoneMetrics(args: any) {
