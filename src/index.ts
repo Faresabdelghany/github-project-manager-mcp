@@ -22,7 +22,7 @@ class GitHubProjectManagerServer {
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '2.11.0',
+        version: '2.12.0',
       }
     );
 
@@ -1748,7 +1748,246 @@ class GitHubProjectManagerServer {
   }
 
   private async handleUpdateMilestone(args: any) {
-    return { content: [{ type: "text", text: "Update milestone functionality - to be implemented" }] };
+    this.validateRepoConfig();
+
+    try {
+      const { milestone_number, title, description, due_on, state } = args;
+
+      if (!milestone_number) {
+        throw new Error('milestone_number is required');
+      }
+
+      // First, get the current milestone to compare changes
+      let currentMilestone;
+      try {
+        const currentResponse = await this.octokit.rest.issues.getMilestone({
+          owner: this.owner,
+          repo: this.repo,
+          milestone_number: milestone_number
+        });
+        currentMilestone = currentResponse.data;
+      } catch (error: any) {
+        if (error.status === 404) {
+          throw new Error(`Milestone #${milestone_number} not found`);
+        }
+        throw error;
+      }
+
+      // Build update object with only changed fields
+      const updateData: any = {
+        owner: this.owner,
+        repo: this.repo,
+        milestone_number: milestone_number
+      };
+
+      let changedFields = [];
+
+      if (title && title !== currentMilestone.title) {
+        updateData.title = title;
+        changedFields.push(`title: "${currentMilestone.title}" → "${title}"`);
+      }
+
+      if (description !== undefined && description !== currentMilestone.description) {
+        updateData.description = description;
+        const oldDesc = currentMilestone.description || 'None';
+        const newDesc = description || 'None';
+        changedFields.push(`description: "${oldDesc.substring(0, 50)}${oldDesc.length > 50 ? '...' : ''}" → "${newDesc.substring(0, 50)}${newDesc.length > 50 ? '...' : ''}"`);
+      }
+
+      if (due_on !== undefined) {
+        const formattedDate = this.formatDateForGitHub(due_on);
+        const currentDueDate = currentMilestone.due_on;
+        
+        if (formattedDate !== currentDueDate) {
+          updateData.due_on = formattedDate;
+          const oldDate = currentDueDate ? new Date(currentDueDate).toLocaleDateString() : 'Not set';
+          const newDate = formattedDate ? new Date(formattedDate).toLocaleDateString() : 'Not set';
+          changedFields.push(`due date: ${oldDate} → ${newDate}`);
+          
+          // Validate the new due date
+          if (formattedDate) {
+            const dueDate = new Date(formattedDate);
+            const today = new Date();
+            if (dueDate < today) {
+              changedFields.push('⚠️ Warning: Due date is in the past');
+            }
+          }
+        }
+      }
+
+      if (state && state !== currentMilestone.state) {
+        updateData.state = state;
+        changedFields.push(`state: ${currentMilestone.state} → ${state}`);
+        
+        // Handle state transition logic
+        if (state === 'closed' && currentMilestone.state === 'open') {
+          changedFields.push('🎯 Milestone will be marked as completed');
+        } else if (state === 'open' && currentMilestone.state === 'closed') {
+          changedFields.push('🔄 Milestone will be reopened');
+        }
+      }
+
+      // If no changes detected, return early
+      if (changedFields.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: `ℹ️ **No Changes Detected**\n\n**Milestone:** ${currentMilestone.title} (#${milestone_number})\n\nNo modifications were made as all provided values match the current milestone state.\n\n**Current Status:**\n- Title: ${currentMilestone.title}\n- Description: ${currentMilestone.description || 'None'}\n- Due Date: ${currentMilestone.due_on ? new Date(currentMilestone.due_on).toLocaleDateString() : 'Not set'}\n- State: ${currentMilestone.state}\n- URL: ${currentMilestone.html_url}`
+          }]
+        };
+      }
+
+      // Check for potential issues with associated items
+      let associatedIssuesWarning = '';
+      if (currentMilestone.open_issues > 0 || currentMilestone.closed_issues > 0) {
+        const totalIssues = currentMilestone.open_issues + currentMilestone.closed_issues;
+        associatedIssuesWarning = `\n\n⚠️ **Associated Issues Warning:**\nThis milestone has ${totalIssues} associated issues (${currentMilestone.open_issues} open, ${currentMilestone.closed_issues} closed).\n`;
+        
+        if (state === 'closed' && currentMilestone.open_issues > 0) {
+          associatedIssuesWarning += `Warning: Closing milestone with ${currentMilestone.open_issues} open issues.`;
+        }
+        
+        if (due_on && updateData.due_on) {
+          const newDueDate = new Date(updateData.due_on);
+          const today = new Date();
+          const daysUntilDue = Math.ceil((newDueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          
+          if (daysUntilDue < 7 && currentMilestone.open_issues > 0) {
+            associatedIssuesWarning += `\nTime pressure: ${daysUntilDue} days until due date with ${currentMilestone.open_issues} open issues.`;
+          }
+        }
+      }
+
+      // Check for sprint associations (if this milestone is part of a sprint)
+      const sprintData = this.parseSprintDescription(currentMilestone.description || '');
+      let sprintWarning = '';
+      if (sprintData && sprintData.type === 'sprint') {
+        sprintWarning = `\n\n🏃‍♂️ **Sprint Impact:**\nThis milestone is part of Sprint ${sprintData.sprintNumber}.`;
+        
+        if (title && title !== currentMilestone.title) {
+          sprintWarning += `\nSprint title will be updated to reflect milestone changes.`;
+        }
+        
+        if (due_on && updateData.due_on) {
+          sprintWarning += `\nSprint end date will be updated to match milestone due date.`;
+        }
+        
+        if (state === 'closed') {
+          sprintWarning += `\nSprint will be marked as completed.`;
+        }
+        
+        // Update sprint metadata if this is a sprint milestone
+        if (description !== undefined || due_on !== undefined) {
+          const updatedSprintData = {
+            ...sprintData,
+            description: description !== undefined ? description : sprintData.description,
+            endDate: updateData.due_on ? updateData.due_on.split('T')[0] : sprintData.endDate,
+            updatedAt: new Date().toISOString()
+          };
+          
+          const updatedSprintDescription = this.createSprintDescription(updatedSprintData);
+          updateData.description = updatedSprintDescription;
+        }
+      }
+
+      // Perform the update
+      const response = await this.octokit.rest.issues.updateMilestone(updateData);
+      const updatedMilestone = response.data;
+
+      // Calculate progress metrics
+      const totalIssues = updatedMilestone.open_issues + updatedMilestone.closed_issues;
+      const progress = totalIssues > 0 ? Math.round((updatedMilestone.closed_issues / totalIssues) * 100) : 0;
+      
+      // Calculate days remaining/overdue
+      let dueDateInfo = '';
+      if (updatedMilestone.due_on) {
+        const dueDate = new Date(updatedMilestone.due_on);
+        const today = new Date();
+        const daysUntilDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        
+        if (daysUntilDue > 0) {
+          dueDateInfo = `📅 **Due in ${daysUntilDue} days** (${dueDate.toLocaleDateString()})`;
+        } else if (daysUntilDue === 0) {
+          dueDateInfo = `⚠️ **Due today** (${dueDate.toLocaleDateString()})`;
+        } else {
+          dueDateInfo = `❌ **Overdue by ${Math.abs(daysUntilDue)} days** (was due ${dueDate.toLocaleDateString()})`;
+        }
+      } else {
+        dueDateInfo = '📅 **No due date set**';
+      }
+
+      // Build success response
+      let result = `✅ **Milestone updated successfully!**\n\n`;
+      result += `**Milestone:** ${updatedMilestone.title} (#${milestone_number})\n`;
+      result += `**State:** ${updatedMilestone.state}\n`;
+      result += `${dueDateInfo}\n`;
+      result += `**Progress:** ${progress}% completed (${updatedMilestone.closed_issues}/${totalIssues} issues closed)\n`;
+      result += `**URL:** ${updatedMilestone.html_url}\n\n`;
+
+      result += `**Changes Applied:**\n`;
+      changedFields.forEach((change, index) => {
+        result += `${index + 1}. ${change}\n`;
+      });
+
+      // Add warnings if any
+      if (associatedIssuesWarning) {
+        result += associatedIssuesWarning;
+      }
+      
+      if (sprintWarning) {
+        result += sprintWarning;
+      }
+
+      // Add recommendations
+      result += `\n\n**Recommendations:**\n`;
+      
+      if (updatedMilestone.state === 'open') {
+        if (updatedMilestone.open_issues > 0) {
+          result += `• Review and prioritize ${updatedMilestone.open_issues} open issues\n`;
+        }
+        
+        if (updatedMilestone.due_on) {
+          const dueDate = new Date(updatedMilestone.due_on);
+          const today = new Date();
+          const daysUntilDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          
+          if (daysUntilDue < 14 && updatedMilestone.open_issues > 0) {
+            result += `• Consider sprint planning for remaining work (${daysUntilDue} days left)\n`;
+          }
+        } else {
+          result += `• Consider setting a due date for better project planning\n`;
+        }
+      }
+      
+      if (updatedMilestone.state === 'closed') {
+        result += `• Archive or document milestone outcomes\n`;
+        if (updatedMilestone.open_issues > 0) {
+          result += `• Reassign ${updatedMilestone.open_issues} remaining open issues to other milestones\n`;
+        }
+      }
+      
+      if (totalIssues === 0) {
+        result += `• Add issues to this milestone to track progress\n`;
+      }
+
+      // Add next actions
+      result += `\n**Next Actions:**\n`;
+      result += `• Use 'get_milestone_metrics' to view detailed progress\n`;
+      result += `• Use 'list_issues' with milestone filter to see associated issues\n`;
+      if (updatedMilestone.state === 'open') {
+        result += `• Use 'add_issues_to_sprint' if this milestone is part of a sprint\n`;
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: result
+        }]
+      };
+
+    } catch (error: any) {
+      throw new Error(`Failed to update milestone: ${error.message}`);
+    }
   }
 
   private async handleDeleteMilestone(args: any) {
@@ -1982,6 +2221,7 @@ class GitHubProjectManagerServer {
     await this.server.connect(transport);
     console.error("GitHub Project Manager MCP server running on stdio");
     console.error(`Repository: ${this.owner}/${this.repo}`);
+    console.error("✅ Issue #30 IMPLEMENTED: update_milestone tool with comprehensive milestone modification!");
     console.error("✅ Issue #29 IMPLEMENTED: delete_project tool with safe deletion, archiving, and confirmation!");
     console.error("Tools available: 46 comprehensive project management tools");
   }
