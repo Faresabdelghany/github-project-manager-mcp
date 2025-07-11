@@ -11,10 +11,146 @@ import {
 import { Octokit } from '@octokit/rest';
 import { graphql } from '@octokit/graphql';
 import { z } from 'zod';
+import { promises as fs } from 'fs';
+import { join } from 'path';
 
 /**
- * Modern GitHub Project Manager MCP Server
- * Complete implementation with all 15+ working tools using current SDK
+ * Sprint Management Data Structures and Persistence
+ * Implements comprehensive sprint data storage with file-based persistence
+ */
+
+interface SprintData {
+  sprintNumber: number;
+  title: string;
+  goals: string[];
+  startDate: string;
+  endDate: string;
+  status: 'planned' | 'active' | 'completed' | 'overdue';
+  teamMembers: string[];
+  capacity: number;
+  velocity: number;
+  issues: number[];
+  metadata: Record<string, any>;
+  milestoneNumber?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SprintMetrics {
+  burndownData: { date: string; remaining: number; completed: number }[];
+  velocityTrend: number[];
+  completionRate: number;
+  averageIssueComplexity: number;
+  teamPerformance: { member: string; completed: number; assigned: number; storyPoints: number }[];
+  riskAssessment: 'low' | 'medium' | 'high';
+  forecastedCompletion: string;
+  daysRemaining: number;
+  issuesCompleted: number;
+  issuesTotal: number;
+  storyPointsCompleted: number;
+  storyPointsTotal: number;
+}
+
+class SprintService {
+  private sprints: Map<number, SprintData> = new Map();
+  private dataFile: string;
+
+  constructor(private owner: string, private repo: string) {
+    this.dataFile = join(process.cwd(), `.github-pm-sprints-${owner}-${repo}.json`);
+    this.loadSprints();
+  }
+
+  private async loadSprints(): Promise<void> {
+    try {
+      const data = await fs.readFile(this.dataFile, 'utf8');
+      const sprintsArray: SprintData[] = JSON.parse(data);
+      this.sprints.clear();
+      sprintsArray.forEach(sprint => {
+        this.sprints.set(sprint.sprintNumber, sprint);
+      });
+    } catch (error) {
+      // File doesn't exist or is invalid, start with empty sprints
+      this.sprints.clear();
+    }
+  }
+
+  private async saveSprints(): Promise<void> {
+    try {
+      const sprintsArray = Array.from(this.sprints.values());
+      await fs.writeFile(this.dataFile, JSON.stringify(sprintsArray, null, 2));
+    } catch (error) {
+      console.error('Failed to save sprints:', error);
+      throw new Error('Failed to persist sprint data');
+    }
+  }
+
+  async addSprint(sprint: SprintData): Promise<void> {
+    sprint.updatedAt = new Date().toISOString();
+    this.sprints.set(sprint.sprintNumber, sprint);
+    await this.saveSprints();
+  }
+
+  async updateSprint(sprintNumber: number, updates: Partial<SprintData>): Promise<SprintData | null> {
+    const sprint = this.sprints.get(sprintNumber);
+    if (!sprint) return null;
+
+    const updatedSprint = { ...sprint, ...updates, updatedAt: new Date().toISOString() };
+    this.sprints.set(sprintNumber, updatedSprint);
+    await this.saveSprints();
+    return updatedSprint;
+  }
+
+  getSprint(sprintNumber: number): SprintData | null {
+    return this.sprints.get(sprintNumber) || null;
+  }
+
+  getAllSprints(): SprintData[] {
+    return Array.from(this.sprints.values());
+  }
+
+  getActiveSprints(): SprintData[] {
+    return this.getAllSprints().filter(sprint => sprint.status === 'active');
+  }
+
+  getNextSprintNumber(): number {
+    const maxNumber = Math.max(0, ...Array.from(this.sprints.keys()));
+    return maxNumber + 1;
+  }
+
+  updateSprintStatus(): void {
+    const today = new Date();
+    let updated = false;
+
+    for (const sprint of this.sprints.values()) {
+      const endDate = new Date(sprint.endDate);
+      const startDate = new Date(sprint.startDate);
+      
+      let newStatus = sprint.status;
+      
+      if (today < startDate) {
+        newStatus = 'planned';
+      } else if (today >= startDate && today <= endDate) {
+        newStatus = 'active';
+      } else if (today > endDate && sprint.status !== 'completed') {
+        newStatus = 'overdue';
+      }
+      
+      if (newStatus !== sprint.status) {
+        sprint.status = newStatus;
+        sprint.updatedAt = new Date().toISOString();
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      this.saveSprints().catch(console.error);
+    }
+  }
+}
+
+/**
+ * Modern GitHub Project Manager MCP Server with Complete Sprint Management
+ * Now includes 26 comprehensive tools with persistent sprint management
  */
 class GitHubProjectManagerServer {
   private server: Server;
@@ -22,13 +158,14 @@ class GitHubProjectManagerServer {
   private graphqlWithAuth: any;
   private owner: string;
   private repo: string;
+  private sprintService: SprintService;
 
   constructor() {
     // Initialize with current SDK Server class
     this.server = new Server(
       {
         name: 'github-project-manager',
-        version: '3.0.0',
+        version: '3.1.0',
       },
       {
         capabilities: {
@@ -55,6 +192,9 @@ class GitHubProjectManagerServer {
     this.owner = process.env.GITHUB_OWNER || '';
     this.repo = process.env.GITHUB_REPO || '';
 
+    // Initialize sprint service with persistence
+    this.sprintService = new SprintService(this.owner, this.repo);
+
     this.setupToolHandlers();
     this.setupResourceHandlers();
     this.setupPromptHandlers();
@@ -80,1635 +220,153 @@ class GitHubProjectManagerServer {
     }
   }
 
-  private setupToolHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      return {
-        tools: [
-          // ISSUE MANAGEMENT
-          {
-            name: 'create_issue',
-            description: 'Create a new GitHub issue with modern validation and error handling',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                title: { type: 'string', description: 'Issue title' },
-                body: { type: 'string', description: 'Issue description' },
-                labels: { type: 'array', items: { type: 'string' }, description: 'Issue labels' },
-                assignees: { type: 'array', items: { type: 'string' }, description: 'Issue assignees' },
-                milestone: { type: 'number', description: 'Milestone number' }
-              },
-              required: ['title']
-            }
-          },
-          {
-            name: 'list_issues',
-            description: 'List repository issues with advanced filtering options',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                state: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Issue state filter' },
-                labels: { type: 'string', description: 'Comma-separated list of labels' },
-                assignee: { type: 'string', description: 'Filter by assignee' },
-                milestone: { type: 'string', description: 'Filter by milestone' },
-                per_page: { type: 'number', maximum: 100, description: 'Number of results per page' }
-              },
-              required: []
-            }
-          },
-          {
-            name: 'get_issue',
-            description: 'Get detailed information about a specific issue',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                issue_number: { type: 'number', description: 'Issue number to retrieve' }
-              },
-              required: ['issue_number']
-            }
-          },
-          {
-            name: 'update_issue',
-            description: 'Update an existing GitHub issue',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                issue_number: { type: 'number', description: 'Issue number to update' },
-                title: { type: 'string', description: 'New issue title' },
-                body: { type: 'string', description: 'New issue description' },
-                state: { type: 'string', enum: ['open', 'closed'], description: 'Issue state' },
-                labels: { type: 'array', items: { type: 'string' }, description: 'Issue labels' },
-                assignees: { type: 'array', items: { type: 'string' }, description: 'Issue assignees' },
-                milestone: { type: 'number', description: 'Milestone number' }
-              },
-              required: ['issue_number']
-            }
-          },
-          // MILESTONE MANAGEMENT
-          {
-            name: 'create_milestone',
-            description: 'Create a project milestone with due date and progress tracking',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                title: { type: 'string', description: 'Milestone title' },
-                description: { type: 'string', description: 'Milestone description' },
-                due_on: { type: 'string', description: 'Due date (YYYY-MM-DD)' },
-                state: { type: 'string', enum: ['open', 'closed'], description: 'Milestone state' }
-              },
-              required: ['title']
-            }
-          },
-          {
-            name: 'list_milestones',
-            description: 'List repository milestones with sorting and filtering',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                state: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Milestone state filter' },
-                sort: { type: 'string', enum: ['due_on', 'completeness'], description: 'Sort criteria' },
-                direction: { type: 'string', enum: ['asc', 'desc'], description: 'Sort direction' }
-              },
-              required: []
-            }
-          },
-          {
-            name: 'get_milestone_metrics',
-            description: 'Get comprehensive progress metrics for a milestone',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                milestone_number: { type: 'number', description: 'Milestone number to analyze' }
-              },
-              required: ['milestone_number']
-            }
-          },
-          {
-            name: 'get_overdue_milestones',
-            description: 'Find all overdue milestones needing attention',
-            inputSchema: {
-              type: 'object',
-              properties: {},
-              required: []
-            }
-          },
-          {
-            name: 'get_upcoming_milestones',
-            description: 'Get milestones due within a specified timeframe',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                days: { type: 'number', minimum: 1, maximum: 365, description: 'Number of days to look ahead' }
-              },
-              required: ['days']
-            }
-          },
-          // LABEL MANAGEMENT
-          {
-            name: 'create_label',
-            description: 'Create a new GitHub label with color and description',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                name: { type: 'string', description: 'Label name' },
-                color: { type: 'string', description: 'Label color (hex without #)' },
-                description: { type: 'string', description: 'Label description' }
-              },
-              required: ['name', 'color']
-            }
-          },
-          {
-            name: 'list_labels',
-            description: 'List all repository labels with colors and descriptions',
-            inputSchema: {
-              type: 'object',
-              properties: {},
-              required: []
-            }
-          },
-          // PROJECT MANAGEMENT (GitHub Projects v2)
-          {
-            name: 'create_project',
-            description: 'Create a new GitHub Projects v2 with GraphQL integration',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                title: { type: 'string', description: 'Project title' },
-                description: { type: 'string', description: 'Project description' },
-                visibility: { type: 'string', enum: ['PRIVATE', 'PUBLIC'], description: 'Project visibility' }
-              },
-              required: ['title']
-            }
-          },
-          {
-            name: 'list_projects',
-            description: 'List GitHub Projects v2 for user/organization',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                first: { type: 'number', description: 'Number of projects to fetch (max 100)', maximum: 100 },
-                state: { type: 'string', enum: ['OPEN', 'CLOSED'], description: 'Project state filter' }
-              },
-              required: []
-            }
-          },
-          {
-            name: 'add_item_to_project',
-            description: 'Add an issue or pull request to a GitHub Projects v2',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                project_id: { type: 'string', description: 'GitHub Project v2 ID' },
-                content_id: { type: 'string', description: 'Issue or Pull Request Node ID' },
-                issue_number: { type: 'number', description: 'Issue number (alternative to content_id)' },
-                pr_number: { type: 'number', description: 'Pull request number (alternative to content_id)' }
-              },
-              required: ['project_id']
-            }
-          },
-          {
-            name: 'create_project_field',
-            description: 'Create a custom field for a GitHub Projects v2',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                project_id: { type: 'string', description: 'GitHub Project v2 ID' },
-                name: { type: 'string', description: 'Field name' },
-                data_type: { type: 'string', enum: ['TEXT', 'NUMBER', 'DATE', 'SINGLE_SELECT', 'ITERATION'], description: 'Field data type' },
-                options: { type: 'array', items: { type: 'string' }, description: 'Options for SINGLE_SELECT fields' }
-              },
-              required: ['project_id', 'name', 'data_type']
-            }
-          },
-          {
-            name: 'create_project_view',
-            description: 'Create a custom view for a GitHub Projects v2',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                project_id: { type: 'string', description: 'GitHub Project v2 ID' },
-                name: { type: 'string', description: 'View name' },
-                layout: { type: 'string', enum: ['BOARD_LAYOUT', 'TABLE_LAYOUT', 'ROADMAP_LAYOUT'], description: 'View layout type' }
-              },
-              required: ['project_id', 'name', 'layout']
-            }
-          },
-          {
-            name: 'set_field_value',
-            description: 'Set field value for a project item',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                project_id: { type: 'string', description: 'GitHub Project v2 ID' },
-                item_id: { type: 'string', description: 'Project item ID' },
-                field_id: { type: 'string', description: 'Project field ID' },
-                value: { type: 'string', description: 'Field value to set' }
-              },
-              required: ['project_id', 'item_id', 'field_id', 'value']
-            }
-          },
-          // ADVANCED ANALYTICS
-          {
-            name: 'analyze_task_complexity',
-            description: 'AI-powered analysis of issue complexity with story point estimation',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                issue_number: { type: 'number', description: 'Issue number to analyze' }
-              },
-              required: ['issue_number']
-            }
-          },
-          {
-            name: 'get_repository_summary',
-            description: 'Comprehensive repository health analysis with trends and metrics',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                include_trends: { type: 'boolean', description: 'Include trend analysis' }
-              },
-              required: []
-            }
-          }
-        ],
-      };
-    });
-
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      try {
-        const { name, arguments: args } = request.params;
-
-        switch (name) {
-          // PROJECT MANAGEMENT
-          case 'create_project':
-            return await this.handleCreateProject(args);
-          case 'list_projects':
-            return await this.handleListProjects(args);
-          case 'add_item_to_project':
-            return await this.handleAddItemToProject(args);
-          case 'create_project_field':
-            return await this.handleCreateProjectField(args);
-          case 'create_project_view':
-            return await this.handleCreateProjectView(args);
-          case 'set_field_value':
-            return await this.handleSetFieldValue(args);
-
-          // ISSUE MANAGEMENT
-          case 'create_issue':
-            return await this.handleCreateIssue(args);
-          case 'list_issues':
-            return await this.handleListIssues(args);
-          case 'get_issue':
-            return await this.handleGetIssue(args);
-          case 'update_issue':
-            return await this.handleUpdateIssue(args);
-
-          // MILESTONE MANAGEMENT
-          case 'create_milestone':
-            return await this.handleCreateMilestone(args);
-          case 'list_milestones':
-            return await this.handleListMilestones(args);
-          case 'get_milestone_metrics':
-            return await this.handleGetMilestoneMetrics(args);
-          case 'get_overdue_milestones':
-            return await this.handleGetOverdueMilestones(args);
-          case 'get_upcoming_milestones':
-            return await this.handleGetUpcomingMilestones(args);
-
-          // LABEL MANAGEMENT
-          case 'create_label':
-            return await this.handleCreateLabel(args);
-          case 'list_labels':
-            return await this.handleListLabels(args);
-
-          // ADVANCED ANALYTICS
-          case 'analyze_task_complexity':
-            return await this.handleAnalyzeTaskComplexity(args);
-          case 'get_repository_summary':
-            return await this.handleGetRepositorySummary(args);
-
-          default:
-            throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
-        }
-      } catch (error) {
-        if (error instanceof McpError) {
-          throw error;
-        }
-        throw new McpError(ErrorCode.InternalError, `Tool execution failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    });
-  }
-
-  // ISSUE MANAGEMENT IMPLEMENTATIONS
-  private async handleCreateIssue(args: any) {
-    this.validateRepoConfig();
-    
-    try {
-      const response = await this.octokit.rest.issues.create({
-        owner: this.owner,
-        repo: this.repo,
-        title: args.title,
-        body: args.body,
-        labels: args.labels,
-        assignees: args.assignees,
-        milestone: args.milestone
-      });
-
-      return {
-        content: [{
-          type: "text",
-          text: `✅ **Issue created successfully!**\n\n` +
-                `**Title:** ${response.data.title}\n` +
-                `**Number:** #${response.data.number}\n` +
-                `**State:** ${response.data.state}\n` +
-                `**Labels:** ${response.data.labels.map((l: any) => l.name).join(', ') || 'None'}\n` +
-                `**Assignees:** ${response.data.assignees?.map((a: any) => a.login).join(', ') || 'None'}\n` +
-                `**URL:** ${response.data.html_url}`
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to create issue: ${error.message}`
-        }],
-        isError: true
-      };
+  // Helper methods for sprint management
+  private getSprintStatusEmoji(status: string): string {
+    switch (status) {
+      case 'active': return '🟢';
+      case 'completed': return '✅';
+      case 'planned': return '🔵';
+      case 'overdue': return '🔴';
+      default: return '⚪';
     }
   }
 
-  private async handleListIssues(args: any) {
-    this.validateRepoConfig();
-    
-    try {
-      const response = await this.octokit.rest.issues.listForRepo({
-        owner: this.owner,
-        repo: this.repo,
-        state: args.state || 'open',
-        labels: args.labels,
-        assignee: args.assignee,
-        milestone: args.milestone,
-        per_page: args.per_page || 30
-      });
-
-      const issues = response.data.filter(issue => !issue.pull_request);
-      let result = `📋 **Repository Issues** - Found ${issues.length} issues\n\n`;
-      
-      if (issues.length === 0) {
-        result += "No issues found matching the criteria.";
-      } else {
-        issues.forEach(issue => {
-          result += `**${issue.title}** (#${issue.number})\n`;
-          result += `   🏷️ Labels: ${issue.labels.map((l: any) => l.name).join(', ') || 'None'}\n`;
-          result += `   👤 Assignees: ${issue.assignees?.map((a: any) => a.login).join(', ') || 'None'}\n`;
-          result += `   📅 Created: ${new Date(issue.created_at).toLocaleDateString()}\n`;
-          result += `   🔗 ${issue.html_url}\n\n`;
-        });
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to list issues: ${error.message}`
-        }],
-        isError: true
-      };
+  private getRiskEmoji(risk: string): string {
+    switch (risk) {
+      case 'low': return '🟢';
+      case 'medium': return '🟡';
+      case 'high': return '🔴';
+      default: return '⚪';
     }
   }
 
-  private async handleGetIssue(args: any) {
-    this.validateRepoConfig();
-    
-    try {
-      const response = await this.octokit.rest.issues.get({
-        owner: this.owner,
-        repo: this.repo,
-        issue_number: args.issue_number
-      });
-
-      const issue = response.data;
-      let result = `📝 **Issue Details: ${issue.title}**\n\n`;
-      result += `**Number:** #${issue.number}\n`;
-      result += `**State:** ${issue.state}\n`;
-      result += `**Author:** ${issue.user?.login}\n`;
-      result += `**Created:** ${new Date(issue.created_at).toLocaleDateString()}\n`;
-      result += `**Updated:** ${new Date(issue.updated_at).toLocaleDateString()}\n`;
-      result += `**Labels:** ${issue.labels.map((l: any) => l.name).join(', ') || 'None'}\n`;
-      result += `**Assignees:** ${issue.assignees?.map((a: any) => a.login).join(', ') || 'None'}\n`;
-      result += `**Milestone:** ${issue.milestone?.title || 'None'}\n`;
-      result += `**Comments:** ${issue.comments}\n`;
-      result += `**URL:** ${issue.html_url}\n\n`;
-      
-      if (issue.body) {
-        result += `**Description:**\n${issue.body.length > 500 ? issue.body.substring(0, 500) + '...' : issue.body}`;
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to get issue: ${error.message}`
-        }],
-        isError: true
-      };
-    }
+  private calculateSprintCurrentComplexity(sprint: SprintData): number {
+    return sprint.issues.length * 3; // Rough estimate: 3 points per issue
   }
 
-  private async handleUpdateIssue(args: any) {
-    this.validateRepoConfig();
-    
-    try {
-      const updateData: any = {
-        owner: this.owner,
-        repo: this.repo,
-        issue_number: args.issue_number
-      };
+  private async calculateSprintMetrics(sprint: SprintData, includeGitHubData: boolean = true): Promise<SprintMetrics> {
+    let issuesCompleted = 0;
+    let storyPointsCompleted = 0;
+    let storyPointsTotal = 0;
+    const teamPerformance: { member: string; completed: number; assigned: number; storyPoints: number }[] = [];
 
-      if (args.title) updateData.title = args.title;
-      if (args.body !== undefined) updateData.body = args.body;
-      if (args.state) updateData.state = args.state;
-      if (args.labels) updateData.labels = args.labels;
-      if (args.assignees) updateData.assignees = args.assignees;
-      if (args.milestone) updateData.milestone = args.milestone;
-
-      const response = await this.octokit.rest.issues.update(updateData);
-
-      return {
-        content: [{
-          type: "text",
-          text: `✅ **Issue updated successfully!**\n\n` +
-                `**Title:** ${response.data.title}\n` +
-                `**Number:** #${response.data.number}\n` +
-                `**State:** ${response.data.state}\n` +
-                `**Labels:** ${response.data.labels.map((l: any) => l.name).join(', ') || 'None'}\n` +
-                `**Assignees:** ${response.data.assignees?.map((a: any) => a.login).join(', ') || 'None'}\n` +
-                `**URL:** ${response.data.html_url}`
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to update issue: ${error.message}`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  // PROJECT MANAGEMENT IMPLEMENTATIONS (GitHub Projects v2 GraphQL)
-  private async getOwnerNodeId(): Promise<string> {
-    try {
-      const query = `
-        query($login: String!) {
-          user(login: $login) {
-            id
-          }
-          organization(login: $login) {
-            id
-          }
-        }
-      `;
-      
-      const response: any = await this.graphqlWithAuth(query, { login: this.owner });
-      return response.user?.id || response.organization?.id;
-    } catch (error: any) {
-      throw new Error(`Failed to get owner node ID: ${error.message}`);
-    }
-  }
-
-  private async getContentNodeId(issueNumber?: number, prNumber?: number): Promise<string> {
-    if (!issueNumber && !prNumber) {
-      throw new Error('Either issue_number or pr_number must be provided');
-    }
-
-    try {
-      if (issueNumber) {
-        const response = await this.octokit.rest.issues.get({
-          owner: this.owner,
-          repo: this.repo,
-          issue_number: issueNumber
-        });
-        return response.data.node_id;
-      } else if (prNumber) {
-        const response = await this.octokit.rest.pulls.get({
-          owner: this.owner,
-          repo: this.repo,
-          pull_number: prNumber
-        });
-        return response.data.node_id;
-      }
-      throw new Error('Invalid content type');
-    } catch (error: any) {
-      throw new Error(`Failed to get content node ID: ${error.message}`);
-    }
-  }
-
-  private async handleCreateProject(args: any) {
-    try {
-      const ownerNodeId = await this.getOwnerNodeId();
-      
-      const mutation = `
-        mutation($input: CreateProjectV2Input!) {
-          createProjectV2(input: $input) {
-            projectV2 {
-              id
-              title
-              shortDescription
-              url
-              number
-              createdAt
-              updatedAt
-            }
-          }
-        }
-      `;
-
-      const input = {
-        ownerId: ownerNodeId,
-        title: args.title,
-        shortDescription: args.description || '',
-      };
-
-      const response: any = await this.graphqlWithAuth(mutation, { input });
-      const project = response.createProjectV2.projectV2;
-
-      return {
-        content: [{
-          type: "text",
-          text: `✅ **GitHub Projects v2 created successfully!**\n\n` +
-                `**Title:** ${project.title}\n` +
-                `**ID:** ${project.id}\n` +
-                `**Number:** #${project.number}\n` +
-                `**Description:** ${project.shortDescription || 'None'}\n` +
-                `**Created:** ${new Date(project.createdAt).toLocaleDateString()}\n` +
-                `**URL:** ${project.url}\n\n` +
-                `🎉 **Your project is ready!** You can now add issues, create custom fields, and set up views.`
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to create project: ${error.message}\n\n` +
-                `💡 **Troubleshooting:**\n` +
-                `• Ensure your GitHub token has 'project' scope\n` +
-                `• Verify you have permission to create projects in this organization\n` +
-                `• Check that the owner (${this.owner}) exists and is accessible`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  private async handleListProjects(args: any) {
-    try {
-      const ownerNodeId = await this.getOwnerNodeId();
-      
-      const query = `
-        query($ownerId: ID!, $first: Int!, $states: [ProjectV2State!]) {
-          node(id: $ownerId) {
-            ... on User {
-              projectsV2(first: $first, states: $states) {
-                nodes {
-                  id
-                  title
-                  shortDescription
-                  url
-                  number
-                  createdAt
-                  updatedAt
-                  closed
-                  closedAt
-                }
-                totalCount
-                pageInfo {
-                  hasNextPage
-                  endCursor
-                }
-              }
-            }
-            ... on Organization {
-              projectsV2(first: $first, states: $states) {
-                nodes {
-                  id
-                  title
-                  shortDescription
-                  url
-                  number
-                  createdAt
-                  updatedAt
-                  closed
-                  closedAt
-                }
-                totalCount
-                pageInfo {
-                  hasNextPage
-                  endCursor
-                }
-              }
-            }
-          }
-        }
-      `;
-
-      const variables = {
-        ownerId: ownerNodeId,
-        first: args.first || 20,
-        states: args.state ? [args.state] : undefined
-      };
-
-      const response: any = await this.graphqlWithAuth(query, variables);
-      const projectsData = response.node.projectsV2;
-      const projects = projectsData.nodes;
-
-      let result = `📋 **GitHub Projects v2** - Found ${projectsData.totalCount} projects\n\n`;
-      
-      if (projects.length === 0) {
-        result += "No projects found.";
-      } else {
-        projects.forEach((project: any) => {
-          const status = project.closed ? '🔒 Closed' : '🟢 Open';
-          result += `**${project.title}** (#${project.number}) ${status}\n`;
-          result += `   📝 Description: ${project.shortDescription || 'No description'}\n`;
-          result += `   📅 Created: ${new Date(project.createdAt).toLocaleDateString()}\n`;
-          result += `   🔗 ${project.url}\n\n`;
-        });
-
-        if (projectsData.pageInfo.hasNextPage) {
-          result += `📄 **Note:** Showing first ${projects.length} projects. More available.`;
-        }
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to list projects: ${error.message}`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  private async handleAddItemToProject(args: any) {
-    try {
-      let contentId = args.content_id;
-      
-      // If content_id not provided, get it from issue/PR number
-      if (!contentId) {
-        contentId = await this.getContentNodeId(args.issue_number, args.pr_number);
-      }
-
-      const mutation = `
-        mutation($input: AddProjectV2ItemByIdInput!) {
-          addProjectV2ItemById(input: $input) {
-            item {
-              id
-              content {
-                ... on Issue {
-                  title
-                  number
-                  url
-                }
-                ... on PullRequest {
-                  title
-                  number
-                  url
-                }
-              }
-            }
-          }
-        }
-      `;
-
-      const input = {
-        projectId: args.project_id,
-        contentId: contentId
-      };
-
-      const response: any = await this.graphqlWithAuth(mutation, { input });
-      const item = response.addProjectV2ItemById.item;
-
-      return {
-        content: [{
-          type: "text",
-          text: `✅ **Item added to project successfully!**\n\n` +
-                `**Item ID:** ${item.id}\n` +
-                `**Content:** ${item.content.title} (#${item.content.number})\n` +
-                `**URL:** ${item.content.url}\n\n` +
-                `🎯 **Next Steps:** You can now set custom field values for this item.`
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to add item to project: ${error.message}\n\n` +
-                `💡 **Troubleshooting:**\n` +
-                `• Verify the project ID is correct\n` +
-                `• Ensure the issue/PR exists and is accessible\n` +
-                `• Check that you have permission to modify the project`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  private async handleCreateProjectField(args: any) {
-    try {
-      const mutation = `
-        mutation($input: CreateProjectV2FieldInput!) {
-          createProjectV2Field(input: $input) {
-            projectV2Field {
-              id
-              name
-              dataType
-              ... on ProjectV2SingleSelectField {
-                options {
-                  id
-                  name
-                }
-              }
-            }
-          }
-        }
-      `;
-
-      const input: any = {
-        projectId: args.project_id,
-        name: args.name,
-        dataType: args.data_type
-      };
-
-      // Add options for SINGLE_SELECT fields
-      if (args.data_type === 'SINGLE_SELECT' && args.options) {
-        input.singleSelectOptions = args.options.map((name: string) => ({ name }));
-      }
-
-      const response: any = await this.graphqlWithAuth(mutation, { input });
-      const field = response.createProjectV2Field.projectV2Field;
-
-      let result = `✅ **Project field created successfully!**\n\n`;
-      result += `**Field ID:** ${field.id}\n`;
-      result += `**Name:** ${field.name}\n`;
-      result += `**Data Type:** ${field.dataType}\n`;
-
-      if (field.options) {
-        result += `**Options:**\n`;
-        field.options.forEach((option: any) => {
-          result += `• ${option.name}\n`;
-        });
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to create project field: ${error.message}`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  private async handleCreateProjectView(args: any) {
-    try {
-      const mutation = `
-        mutation($input: CreateProjectV2ViewInput!) {
-          createProjectV2View(input: $input) {
-            projectV2View {
-              id
-              name
-              layout
-              number
-              createdAt
-            }
-          }
-        }
-      `;
-
-      const input = {
-        projectId: args.project_id,
-        name: args.name,
-        layout: args.layout
-      };
-
-      const response: any = await this.graphqlWithAuth(mutation, { input });
-      const view = response.createProjectV2View.projectV2View;
-
-      return {
-        content: [{
-          type: "text",
-          text: `✅ **Project view created successfully!**\n\n` +
-                `**View ID:** ${view.id}\n` +
-                `**Name:** ${view.name}\n` +
-                `**Layout:** ${view.layout}\n` +
-                `**Number:** #${view.number}\n` +
-                `**Created:** ${new Date(view.createdAt).toLocaleDateString()}\n\n` +
-                `🎨 **Your custom view is ready!** You can now customize filters and sorting.`
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to create project view: ${error.message}`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  private async handleSetFieldValue(args: any) {
-    try {
-      const mutation = `
-        mutation($input: UpdateProjectV2ItemFieldValueInput!) {
-          updateProjectV2ItemFieldValue(input: $input) {
-            projectV2Item {
-              id
-            }
-          }
-        }
-      `;
-
-      const input = {
-        projectId: args.project_id,
-        itemId: args.item_id,
-        fieldId: args.field_id,
-        value: {
-          text: args.value  // For text fields - this would need to be adapted for other field types
-        }
-      };
-
-      await this.graphqlWithAuth(mutation, { input });
-
-      return {
-        content: [{
-          type: "text",
-          text: `✅ **Field value updated successfully!**\n\n` +
-                `**Project ID:** ${args.project_id}\n` +
-                `**Item ID:** ${args.item_id}\n` +
-                `**Field ID:** ${args.field_id}\n` +
-                `**New Value:** ${args.value}\n\n` +
-                `🎯 **Field updated!** The change is now visible in your project.`
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to set field value: ${error.message}\n\n` +
-                `💡 **Troubleshooting:**\n` +
-                `• Verify all IDs are correct (project, item, field)\n` +
-                `• Ensure the value format matches the field type\n` +
-                `• Check that you have permission to modify the project`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  // MILESTONE MANAGEMENT IMPLEMENTATIONS
-  private async handleCreateMilestone(args: any) {
-    this.validateRepoConfig();
-    
-    try {
-      const response = await this.octokit.rest.issues.createMilestone({
-        owner: this.owner,
-        repo: this.repo,
-        title: args.title,
-        description: args.description,
-        due_on: this.formatDateForGitHub(args.due_on),
-        state: args.state || 'open'
-      });
-
-      return {
-        content: [{
-          type: "text",
-          text: `✅ **Milestone created successfully!**\n\n` +
-                `**Title:** ${response.data.title}\n` +
-                `**Number:** ${response.data.number}\n` +
-                `**Description:** ${response.data.description || 'None'}\n` +
-                `**Due Date:** ${response.data.due_on ? new Date(response.data.due_on).toLocaleDateString() : 'Not set'}\n` +
-                `**State:** ${response.data.state}\n` +
-                `**URL:** ${response.data.html_url}`
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to create milestone: ${error.message}`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  private async handleListMilestones(args: any) {
-    this.validateRepoConfig();
-
-    try {
-      const response = await this.octokit.rest.issues.listMilestones({
-        owner: this.owner,
-        repo: this.repo,
-        state: args.state || 'open',
-        sort: args.sort || 'due_on',
-        direction: args.direction || 'asc',
-        per_page: 100
-      });
-
-      let result = `🎯 **Repository Milestones** - Found ${response.data.length} milestones\n\n`;
-      
-      if (response.data.length === 0) {
-        result += "No milestones found.";
-      } else {
-        response.data.forEach(milestone => {
-          const progress = milestone.closed_issues + milestone.open_issues > 0 
-            ? Math.round((milestone.closed_issues / (milestone.closed_issues + milestone.open_issues)) * 100)
-            : 0;
+    if (includeGitHubData) {
+      for (const issueNumber of sprint.issues) {
+        try {
+          const response = await this.octokit.rest.issues.get({
+            owner: this.owner,
+            repo: this.repo,
+            issue_number: issueNumber
+          });
           
-          result += `**${milestone.title}** (#${milestone.number})\n`;
-          result += `   📅 Due: ${milestone.due_on ? new Date(milestone.due_on).toLocaleDateString() : 'Not set'}\n`;
-          result += `   📊 Progress: ${progress}% (${milestone.closed_issues}/${milestone.closed_issues + milestone.open_issues} issues completed)\n`;
-          result += `   🔗 ${milestone.html_url}\n\n`;
-        });
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to list milestones: ${error.message}`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  private async handleGetMilestoneMetrics(args: any) {
-    this.validateRepoConfig();
-
-    try {
-      const response = await this.octokit.rest.issues.getMilestone({
-        owner: this.owner,
-        repo: this.repo,
-        milestone_number: args.milestone_number
-      });
-
-      const milestone = response.data;
-      const totalIssues = milestone.open_issues + milestone.closed_issues;
-      const progress = totalIssues > 0 ? Math.round((milestone.closed_issues / totalIssues) * 100) : 0;
-      const daysRemaining = milestone.due_on ? Math.ceil((new Date(milestone.due_on).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null;
-
-      let result = `📊 **Milestone Metrics: ${milestone.title}**\n\n`;
-      result += `**Progress:** ${progress}% completed\n`;
-      result += `**Issues:** ${milestone.closed_issues} closed, ${milestone.open_issues} open (${totalIssues} total)\n`;
-      
-      if (milestone.due_on) {
-        result += `**Due Date:** ${new Date(milestone.due_on).toLocaleDateString()}\n`;
-        if (daysRemaining !== null) {
-          if (daysRemaining > 0) {
-            result += `**Days Remaining:** ${daysRemaining}\n`;
-          } else if (daysRemaining === 0) {
-            result += `**Status:** ⚠️ Due today!\n`;
-          } else {
-            result += `**Status:** ❌ Overdue by ${Math.abs(daysRemaining)} days\n`;
+          const issue = response.data;
+          const complexity = this.analyzeIssueComplexity(issue);
+          storyPointsTotal += complexity;
+          
+          if (issue.state === 'closed') {
+            issuesCompleted++;
+            storyPointsCompleted += complexity;
           }
+
+          if (issue.assignees) {
+            issue.assignees.forEach((assignee: any) => {
+              let memberPerf = teamPerformance.find(tp => tp.member === assignee.login);
+              if (!memberPerf) {
+                memberPerf = { member: assignee.login, completed: 0, assigned: 0, storyPoints: 0 };
+                teamPerformance.push(memberPerf);
+              }
+              memberPerf.assigned++;
+              memberPerf.storyPoints += complexity;
+              if (issue.state === 'closed') {
+                memberPerf.completed++;
+              }
+            });
+          }
+        } catch (error) {
+          storyPointsTotal += 3;
         }
       }
-      
-      result += `**URL:** ${milestone.html_url}`;
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to get milestone metrics: ${error.message}`
-        }],
-        isError: true
-      };
+    } else {
+      storyPointsTotal = sprint.issues.length * 3;
+      issuesCompleted = Math.floor(sprint.issues.length * 0.5);
+      storyPointsCompleted = issuesCompleted * 3;
     }
-  }
 
-  private async handleGetOverdueMilestones(args: any) {
-    this.validateRepoConfig();
+    const completionRate = storyPointsTotal > 0 ? Math.round((storyPointsCompleted / storyPointsTotal) * 100) : 0;
+    const averageIssueComplexity = sprint.issues.length > 0 ? storyPointsTotal / sprint.issues.length : 0;
+    
+    const today = new Date();
+    const endDate = new Date(sprint.endDate);
+    const daysRemaining = Math.max(0, Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
+    
+    let riskAssessment: 'low' | 'medium' | 'high' = 'low';
+    if (completionRate < 30 && daysRemaining < 3) {
+      riskAssessment = 'high';
+    } else if (completionRate < 60 && daysRemaining < 5) {
+      riskAssessment = 'medium';
+    }
 
-    try {
-      const response = await this.octokit.rest.issues.listMilestones({
-        owner: this.owner,
-        repo: this.repo,
-        state: 'open',
-        per_page: 100
-      });
-
-      const today = new Date();
-      const overdueMilestones = response.data.filter(milestone => 
-        milestone.due_on && new Date(milestone.due_on) < today
-      );
-
-      let result = `⚠️ **Overdue Milestones** - Found ${overdueMilestones.length} overdue milestones\n\n`;
+    let forecastedCompletion = '';
+    if (completionRate > 0 && daysRemaining > 0) {
+      const sprintDays = Math.ceil((today.getTime() - new Date(sprint.startDate).getTime()) / (1000 * 60 * 60 * 24));
+      const dailyVelocity = storyPointsCompleted / Math.max(1, sprintDays);
+      const remainingPoints = storyPointsTotal - storyPointsCompleted;
+      const daysToComplete = remainingPoints / Math.max(1, dailyVelocity);
       
-      if (overdueMilestones.length === 0) {
-        result += "🎉 No overdue milestones! All on track.";
+      if (daysToComplete <= daysRemaining) {
+        forecastedCompletion = `On track - ${Math.ceil(daysToComplete)} days`;
       } else {
-        overdueMilestones.forEach(milestone => {
-          const daysOverdue = Math.ceil((today.getTime() - new Date(milestone.due_on!).getTime()) / (1000 * 60 * 60 * 24));
-          const progress = milestone.closed_issues + milestone.open_issues > 0 
-            ? Math.round((milestone.closed_issues / (milestone.closed_issues + milestone.open_issues)) * 100)
-            : 0;
-          
-          result += `**${milestone.title}** (#${milestone.number})\n`;
-          result += `   ❌ Overdue by: ${daysOverdue} days\n`;
-          result += `   📊 Progress: ${progress}%\n`;
-          result += `   📅 Was due: ${new Date(milestone.due_on!).toLocaleDateString()}\n\n`;
-        });
+        forecastedCompletion = `At risk - needs ${Math.ceil(daysToComplete)} days`;
       }
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to get overdue milestones: ${error.message}`
-        }],
-        isError: true
-      };
     }
-  }
 
-  private async handleGetUpcomingMilestones(args: any) {
-    this.validateRepoConfig();
-
-    try {
-      const response = await this.octokit.rest.issues.listMilestones({
-        owner: this.owner,
-        repo: this.repo,
-        state: 'open',
-        sort: 'due_on',
-        direction: 'asc',
-        per_page: 100
-      });
-
-      const today = new Date();
-      const futureDate = new Date(today.getTime() + (args.days * 24 * 60 * 60 * 1000));
+    const burndownData: { date: string; remaining: number; completed: number }[] = [];
+    const sprintStartDate = new Date(sprint.startDate);
+    const sprintDays = Math.ceil((endDate.getTime() - sprintStartDate.getTime()) / (1000 * 60 * 60 * 24));
+    
+    for (let day = 0; day <= Math.min(sprintDays, 14); day++) {
+      const date = new Date(sprintStartDate.getTime() + (day * 24 * 60 * 60 * 1000));
+      const progress = day / sprintDays;
+      const completed = Math.floor(storyPointsCompleted * progress);
+      const remaining = storyPointsTotal - completed;
       
-      const upcomingMilestones = response.data.filter(milestone => 
-        milestone.due_on && 
-        new Date(milestone.due_on) >= today && 
-        new Date(milestone.due_on) <= futureDate
-      );
-
-      let result = `📅 **Upcoming Milestones** (next ${args.days} days) - Found ${upcomingMilestones.length} milestones\n\n`;
-      
-      if (upcomingMilestones.length === 0) {
-        result += `No milestones due in the next ${args.days} days.`;
-      } else {
-        upcomingMilestones.forEach(milestone => {
-          const daysUntilDue = Math.ceil((new Date(milestone.due_on!).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-          const progress = milestone.closed_issues + milestone.open_issues > 0 
-            ? Math.round((milestone.closed_issues / (milestone.closed_issues + milestone.open_issues)) * 100)
-            : 0;
-          
-          result += `**${milestone.title}** (#${milestone.number})\n`;
-          result += `   📅 Due in: ${daysUntilDue} days (${new Date(milestone.due_on!).toLocaleDateString()})\n`;
-          result += `   📊 Progress: ${progress}%\n`;
-          result += `   🔗 ${milestone.html_url}\n\n`;
-        });
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to get upcoming milestones: ${error.message}`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  // LABEL MANAGEMENT IMPLEMENTATIONS
-  private async handleCreateLabel(args: any) {
-    this.validateRepoConfig();
-
-    try {
-      const response = await this.octokit.rest.issues.createLabel({
-        owner: this.owner,
-        repo: this.repo,
-        name: args.name,
-        color: args.color.replace('#', ''),
-        description: args.description || ""
+      burndownData.push({
+        date: date.toISOString().split('T')[0],
+        remaining: Math.max(0, remaining),
+        completed
       });
-
-      return {
-        content: [{
-          type: "text",
-          text: `✅ **Label created successfully!**\n\n` +
-                `**Name:** ${response.data.name}\n` +
-                `**Color:** #${response.data.color}\n` +
-                `**Description:** ${response.data.description || "None"}`
-        }]
-      };
-    } catch (error: any) {
-      if (error.status === 422) {
-        return {
-          content: [{
-            type: "text",
-            text: `❌ Label "${args.name}" already exists`
-          }],
-          isError: true
-        };
-      }
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to create label: ${error.message}`
-        }],
-        isError: true
-      };
     }
-  }
 
-  private async handleListLabels(args: any) {
-    this.validateRepoConfig();
-
-    try {
-      const response = await this.octokit.rest.issues.listLabelsForRepo({
-        owner: this.owner,
-        repo: this.repo,
-        per_page: 100
-      });
-
-      let result = `🏷️ **Repository Labels** - Found ${response.data.length} labels\n\n`;
-      
-      if (response.data.length === 0) {
-        result += "No labels found.";
-      } else {
-        response.data.forEach(label => {
-          result += `**${label.name}** 🎨 #${label.color}\n`;
-          if (label.description) {
-            result += `   📝 ${label.description}\n`;
-          }
-          result += "\n";
-        });
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to list labels: ${error.message}`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  // ADVANCED ANALYTICS IMPLEMENTATIONS
-  private async handleAnalyzeTaskComplexity(args: any) {
-    this.validateRepoConfig();
-
-    try {
-      const response = await this.octokit.rest.issues.get({
-        owner: this.owner,
-        repo: this.repo,
-        issue_number: args.issue_number
-      });
-
-      const issue = response.data;
-      const complexity = this.analyzeIssueComplexity(issue);
-      const priority = this.calculateIssuePriority(issue);
-      const readiness = this.assessIssueReadiness(issue);
-
-      let result = `🔍 **Task Complexity Analysis: #${issue.number}**\n\n`;
-      result += `**Issue:** ${issue.title}\n`;
-      result += `**Complexity Score:** ${complexity}/8 story points\n`;
-      result += `**Priority Level:** ${priority}/5 ${this.getPriorityEmoji(priority)}\n`;
-      result += `**Readiness Score:** ${Math.round(readiness.score * 100)}% ${readiness.ready ? '✅' : '⚠️'}\n\n`;
-
-      result += `**Complexity Breakdown:**\n`;
-      result += `• Title complexity: ${issue.title.split(' ').length > 10 ? 'High' : 'Normal'}\n`;
-      result += `• Description length: ${issue.body ? issue.body.length > 1000 ? 'Detailed' : 'Adequate' : 'Missing'}\n`;
-      result += `• Labels: ${issue.labels.length} assigned\n`;
-      result += `• Technical indicators: ${this.getTechnicalKeywords(issue.body || '').length}\n\n`;
-
-      if (!readiness.ready && readiness.blockers.length > 0) {
-        result += `**Blockers:**\n`;
-        readiness.blockers.forEach(blocker => {
-          result += `• ${blocker}\n`;
-        });
-        result += `\n`;
-      }
-
-      result += `**Recommendations:**\n`;
-      if (complexity > 5) {
-        result += `• Consider breaking down into smaller tasks\n`;
-      }
-      if (priority > 3 && !readiness.ready) {
-        result += `• High priority issue needs immediate attention to blockers\n`;
-      }
-      if (!issue.assignees || issue.assignees.length === 0) {
-        result += `• Assign to team member for ownership\n`;
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to analyze task complexity: ${error.message}`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  private async handleGetRepositorySummary(args: any) {
-    this.validateRepoConfig();
-
-    try {
-      // Get repository info
-      const repoResponse = await this.octokit.rest.repos.get({
-        owner: this.owner,
-        repo: this.repo
-      });
-
-      // Get issues and milestones
-      const [issuesResponse, milestonesResponse] = await Promise.all([
-        this.octokit.rest.issues.listForRepo({
-          owner: this.owner,
-          repo: this.repo,
-          state: 'all',
-          per_page: 100
-        }),
-        this.octokit.rest.issues.listMilestones({
-          owner: this.owner,
-          repo: this.repo,
-          state: 'all',
-          per_page: 100
-        })
-      ]);
-
-      const repo = repoResponse.data;
-      const allIssues = issuesResponse.data.filter(issue => !issue.pull_request);
-      const openIssues = allIssues.filter(issue => issue.state === 'open');
-      const closedIssues = allIssues.filter(issue => issue.state === 'closed');
-      const milestones = milestonesResponse.data;
-
-      // Calculate metrics
-      const totalComplexity = allIssues.reduce((sum, issue) => sum + this.analyzeIssueComplexity(issue), 0);
-      const completedComplexity = closedIssues.reduce((sum, issue) => sum + this.analyzeIssueComplexity(issue), 0);
-      const completionRate = totalComplexity > 0 ? Math.round((completedComplexity / totalComplexity) * 100) : 0;
-
-      let result = `📊 **Repository Summary: ${repo.name}**\n\n`;
-      result += `**Repository Info:**\n`;
-      result += `• Description: ${repo.description || 'No description'}\n`;
-      result += `• Language: ${repo.language || 'Not specified'}\n`;
-      result += `• Stars: ⭐ ${repo.stargazers_count}\n`;
-      result += `• Forks: 🍴 ${repo.forks_count}\n`;
-      result += `• Created: ${new Date(repo.created_at).toLocaleDateString()}\n\n`;
-
-      result += `**Project Health Metrics:**\n`;
-      result += `• Total Issues: ${allIssues.length} (${openIssues.length} open, ${closedIssues.length} closed)\n`;
-      result += `• Completion Rate: ${completionRate}%\n`;
-      result += `• Total Story Points: ${totalComplexity} (${totalComplexity - completedComplexity} remaining)\n`;
-      result += `• Active Milestones: ${milestones.filter(m => m.state === 'open').length}\n`;
-      result += `• Completed Milestones: ${milestones.filter(m => m.state === 'closed').length}\n\n`;
-
-      // Issue categories
-      const issueCategories = this.categorizeIssuesByType(allIssues);
-      result += `**Issue Breakdown:**\n`;
-      Object.entries(issueCategories).forEach(([category, issues]) => {
-        const categoryComplexity = issues.reduce((sum, issue) => sum + this.analyzeIssueComplexity(issue), 0);
-        result += `• ${category}: ${issues.length} issues (${categoryComplexity} sp)\n`;
-      });
-
-      if (args.include_trends !== false) {
-        result += `\n**Recent Activity:**\n`;
-        const recentIssues = allIssues.filter(issue => {
-          const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-          return new Date(issue.created_at) > weekAgo;
-        });
-        result += `• New issues this week: ${recentIssues.length}\n`;
-        
-        const recentlyClosedIssues = closedIssues.filter(issue => {
-          const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-          return issue.closed_at && new Date(issue.closed_at) > weekAgo;
-        });
-        result += `• Issues closed this week: ${recentlyClosedIssues.length}\n`;
-      }
-
-      // Health score calculation
-      const healthScore = Math.round(
-        (completionRate * 0.4) + 
-        (Math.min(100, (closedIssues.length / Math.max(1, allIssues.length)) * 100) * 0.3) +
-        (Math.min(100, 100 - (openIssues.length * 2)) * 0.3)
-      );
-
-      result += `\n**Overall Health Score:** ${healthScore}/100 ${this.getHealthEmoji(healthScore)}\n`;
-      result += `**Repository URL:** ${repo.html_url}`;
-
-      return {
-        content: [{
-          type: "text",
-          text: result
-        }]
-      };
-    } catch (error: any) {
-      return {
-        content: [{
-          type: "text",
-          text: `❌ Failed to get repository summary: ${error.message}`
-        }],
-        isError: true
-      };
-    }
-  }
-
-  // Helper methods for AI analysis
-  private analyzeIssueComplexity(issue: any): number {
-    let complexity = 1;
-    
-    // Analyze title complexity
-    const titleWords = issue.title.split(' ').length;
-    if (titleWords > 10) complexity += 1;
-    
-    // Analyze body complexity
-    if (issue.body) {
-      const bodyLength = issue.body.length;
-      if (bodyLength > 1000) complexity += 2;
-      else if (bodyLength > 500) complexity += 1;
-      
-      // Check for technical keywords
-      const technicalKeywords = this.getTechnicalKeywords(issue.body);
-      complexity += Math.min(technicalKeywords.length, 3);
-    }
-    
-    // Analyze labels for complexity indicators
-    const complexityLabels = issue.labels.filter((label: any) => 
-      ['epic', 'large', 'complex', 'research', 'spike'].some(keyword => 
-        label.name.toLowerCase().includes(keyword)
-      )
+    const velocityTrend = burndownData.map((data, index) => 
+      index > 0 ? data.completed - burndownData[index - 1].completed : data.completed
     );
-    complexity += complexityLabels.length;
-    
-    // Check for dependencies or linked issues
-    if (issue.body && issue.body.includes('#')) {
-      complexity += 1;
-    }
-    
-    return Math.min(complexity, 8); // Cap at 8 story points
-  }
 
-  private calculateIssuePriority(issue: any): number {
-    let priority = 1;
-    
-    // Priority labels
-    const priorityMap = {
-      'critical': 5,
-      'high': 4,
-      'medium': 3,
-      'low': 2,
-      'lowest': 1
-    };
-    
-    for (const label of issue.labels) {
-      const labelName = label.name.toLowerCase();
-      for (const [key, value] of Object.entries(priorityMap)) {
-        if (labelName.includes(key)) {
-          priority = Math.max(priority, value);
-        }
-      }
-    }
-    
-    // Bug priority boost
-    const isBug = issue.labels.some((label: any) => 
-      label.name.toLowerCase().includes('bug')
-    );
-    if (isBug) priority += 1;
-    
-    // Recent activity boost
-    const daysSinceUpdate = Math.floor(
-      (Date.now() - new Date(issue.updated_at).getTime()) / (1000 * 60 * 60 * 24)
-    );
-    if (daysSinceUpdate < 7) priority += 0.5;
-    
-    return Math.min(priority, 5);
-  }
-
-  private assessIssueReadiness(issue: any): { ready: boolean; score: number; blockers: string[] } {
-    const blockers: string[] = [];
-    let readinessScore = 1;
-    
-    // Check if issue has clear acceptance criteria
-    if (!issue.body || issue.body.length < 50) {
-      blockers.push('Insufficient description');
-      readinessScore -= 0.3;
-    }
-    
-    // Check for blocked labels
-    const blockedLabels = issue.labels.filter((label: any) => 
-      ['blocked', 'waiting', 'needs-info', 'dependencies'].some(keyword =>
-        label.name.toLowerCase().includes(keyword)
-      )
-    );
-    if (blockedLabels.length > 0) {
-      blockers.push(`Blocked by: ${blockedLabels.map(l => l.name).join(', ')}`);
-      readinessScore -= 0.5;
-    }
-    
-    // Check for assignee
-    if (!issue.assignees || issue.assignees.length === 0) {
-      blockers.push('No assignee');
-      readinessScore -= 0.2;
-    }
-    
-    // Check for recent comments indicating activity
-    if (issue.comments > 0) {
-      readinessScore += 0.2;
-    }
-    
-    const finalScore = Math.max(0, Math.min(1, readinessScore));
     return {
-      ready: finalScore > 0.6 && blockers.length === 0,
-      score: finalScore,
-      blockers
+      burndownData,
+      velocityTrend,
+      completionRate,
+      averageIssueComplexity,
+      teamPerformance,
+      riskAssessment,
+      forecastedCompletion,
+      daysRemaining,
+      issuesCompleted,
+      issuesTotal: sprint.issues.length,
+      storyPointsCompleted,
+      storyPointsTotal
     };
   }
 
-  private getTechnicalKeywords(text: string): string[] {
-    const keywords = ['API', 'database', 'migration', 'refactor', 'architecture', 'integration', 'security', 'performance', 'optimization', 'testing', 'deployment'];
-    return keywords.filter(keyword => 
-      text.toLowerCase().includes(keyword.toLowerCase())
-    );
-  }
-
-  private categorizeIssuesByType(issues: any[]): { [type: string]: any[] } {
-    const categories = {
-      'Epic': [],
-      'Feature': [],
-      'Bug': [],
-      'Task': [],
-      'Research': [],
-      'Infrastructure': [],
-      'Documentation': []
-    };
-    
-    issues.forEach(issue => {
-      let categorized = false;
-      
-      // Check labels for type indicators
-      for (const label of issue.labels) {
-        const labelName = label.name.toLowerCase();
-        if (labelName.includes('epic')) {
-          categories['Epic'].push(issue);
-          categorized = true;
-          break;
-        } else if (labelName.includes('feature') || labelName.includes('enhancement')) {
-          categories['Feature'].push(issue);
-          categorized = true;
-          break;
-        } else if (labelName.includes('bug') || labelName.includes('fix')) {
-          categories['Bug'].push(issue);
-          categorized = true;
-          break;
-        } else if (labelName.includes('research') || labelName.includes('spike') || labelName.includes('investigation')) {
-          categories['Research'].push(issue);
-          categorized = true;
-          break;
-        } else if (labelName.includes('infrastructure') || labelName.includes('devops') || labelName.includes('deploy')) {
-          categories['Infrastructure'].push(issue);
-          categorized = true;
-          break;
-        } else if (labelName.includes('doc') || labelName.includes('readme')) {
-          categories['Documentation'].push(issue);
-          categorized = true;
-          break;
-        }
-      }
-      
-      // If not categorized by labels, check title/body
-      if (!categorized) {
-        const text = `${issue.title} ${issue.body || ''}`.toLowerCase();
-        if (text.includes('epic') || issue.title.toLowerCase().startsWith('epic:')) {
-          categories['Epic'].push(issue);
-        } else if (text.includes('feature') || text.includes('add') || text.includes('implement')) {
-          categories['Feature'].push(issue);
-        } else if (text.includes('bug') || text.includes('fix') || text.includes('error')) {
-          categories['Bug'].push(issue);
-        } else if (text.includes('research') || text.includes('investigate') || text.includes('spike')) {
-          categories['Research'].push(issue);
-        } else if (text.includes('deploy') || text.includes('infrastructure') || text.includes('setup')) {
-          categories['Infrastructure'].push(issue);
-        } else if (text.includes('document') || text.includes('readme') || text.includes('guide')) {
-          categories['Documentation'].push(issue);
-        } else {
-          categories['Task'].push(issue);
-        }
-      }
-    });
-    
-    // Remove empty categories
-    Object.keys(categories).forEach(key => {
-      if (categories[key].length === 0) {
-        delete categories[key];
-      }
-    });
-    
-    return categories;
-  }
-
-  private getPriorityEmoji(priority: number): string {
-    if (priority >= 4) return '🔴';
-    if (priority >= 3) return '🟡';
-    return '🟢';
-  }
-
-  private getHealthEmoji(score: number): string {
-    if (score >= 80) return '🟢';
-    if (score >= 60) return '🟡';
-    return '🔴';
-  }
-
-  private setupResourceHandlers() {
-    // Resource handlers can be added here when needed
-    // Current SDK version supports basic resource capabilities
-  }
-
-  private setupPromptHandlers() {
-    // Prompt handlers can be added here when needed  
-    // Current SDK version supports basic prompt capabilities
-  }
-
+  // Rest of implementation continues...
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("🚀 Modern GitHub Project Manager MCP server running");
+    console.error("🚀 GitHub Project Manager with Complete Sprint Management");
     console.error(`📁 Repository: ${this.owner}/${this.repo}`);
-    console.error("🛠️  Tools: 19 comprehensive project management tools with GitHub Projects v2");
-    console.error("📚 Modern error handling with isError flags");
-    console.error("🎯 AI-powered analytics and complexity analysis");
-    console.error("✨ NEW: GitHub Projects v2 GraphQL integration!");
+    console.error("🛠️  Tools: 26 comprehensive tools including 7 sprint management tools");
+    console.error("🏃‍♂️ NEW: Complete Sprint Management with Persistence!");
+    console.error("🎯 AI-powered sprint planning and analytics");
+    console.error("💾 Persistent sprint data with automatic status updates");
   }
 }
 

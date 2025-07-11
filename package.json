@@ -1,14 +1,13 @@
 {
   "name": "github-project-manager",
-  "version": "3.0.0",
-  "description": "Modern GitHub project management MCP server with complete tool implementations and AI-powered analytics",
+  "version": "3.1.0",
+  "description": "Complete GitHub project management MCP server with sprint management, AI-powered analytics, and persistent data storage",
   "main": "build/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
     "start": "node build/index.js",
-    "dev": "tsc --watch",
-    "test": "node test-server.js"
+    "dev": "tsc --watch"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.4.0",
@@ -23,13 +22,16 @@
     "typescript": "^5.0.0"
   },
   "keywords": [
-    "mcp",
     "github",
     "project-management",
-    "issues",
-    "milestones",
-    "ai-analytics"
-  ],
-  "author": "Fares Abdelghany",
-  "license": "MIT"
+    "sprint-management",
+    "agile",
+    "scrum",
+    "mcp",
+    "claude",
+    "ai-powered",
+    "analytics",
+    "burndown",
+    "velocity"
+  ]
 }
