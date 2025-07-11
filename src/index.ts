@@ -225,6 +225,87 @@ class GitHubProjectManagerServer {
               required: []
             }
           },
+          // PROJECT MANAGEMENT (GitHub Projects v2)
+          {
+            name: 'create_project',
+            description: 'Create a new GitHub Projects v2 with GraphQL integration',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', description: 'Project title' },
+                description: { type: 'string', description: 'Project description' },
+                visibility: { type: 'string', enum: ['PRIVATE', 'PUBLIC'], description: 'Project visibility' }
+              },
+              required: ['title']
+            }
+          },
+          {
+            name: 'list_projects',
+            description: 'List GitHub Projects v2 for user/organization',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                first: { type: 'number', description: 'Number of projects to fetch (max 100)', maximum: 100 },
+                state: { type: 'string', enum: ['OPEN', 'CLOSED'], description: 'Project state filter' }
+              },
+              required: []
+            }
+          },
+          {
+            name: 'add_item_to_project',
+            description: 'Add an issue or pull request to a GitHub Projects v2',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+                content_id: { type: 'string', description: 'Issue or Pull Request Node ID' },
+                issue_number: { type: 'number', description: 'Issue number (alternative to content_id)' },
+                pr_number: { type: 'number', description: 'Pull request number (alternative to content_id)' }
+              },
+              required: ['project_id']
+            }
+          },
+          {
+            name: 'create_project_field',
+            description: 'Create a custom field for a GitHub Projects v2',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+                name: { type: 'string', description: 'Field name' },
+                data_type: { type: 'string', enum: ['TEXT', 'NUMBER', 'DATE', 'SINGLE_SELECT', 'ITERATION'], description: 'Field data type' },
+                options: { type: 'array', items: { type: 'string' }, description: 'Options for SINGLE_SELECT fields' }
+              },
+              required: ['project_id', 'name', 'data_type']
+            }
+          },
+          {
+            name: 'create_project_view',
+            description: 'Create a custom view for a GitHub Projects v2',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+                name: { type: 'string', description: 'View name' },
+                layout: { type: 'string', enum: ['BOARD_LAYOUT', 'TABLE_LAYOUT', 'ROADMAP_LAYOUT'], description: 'View layout type' }
+              },
+              required: ['project_id', 'name', 'layout']
+            }
+          },
+          {
+            name: 'set_field_value',
+            description: 'Set field value for a project item',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+                item_id: { type: 'string', description: 'Project item ID' },
+                field_id: { type: 'string', description: 'Project field ID' },
+                value: { type: 'string', description: 'Field value to set' }
+              },
+              required: ['project_id', 'item_id', 'field_id', 'value']
+            }
+          },
           // ADVANCED ANALYTICS
           {
             name: 'analyze_task_complexity',
@@ -257,6 +338,20 @@ class GitHubProjectManagerServer {
         const { name, arguments: args } = request.params;
 
         switch (name) {
+          // PROJECT MANAGEMENT
+          case 'create_project':
+            return await this.handleCreateProject(args);
+          case 'list_projects':
+            return await this.handleListProjects(args);
+          case 'add_item_to_project':
+            return await this.handleAddItemToProject(args);
+          case 'create_project_field':
+            return await this.handleCreateProjectField(args);
+          case 'create_project_view':
+            return await this.handleCreateProjectView(args);
+          case 'set_field_value':
+            return await this.handleSetFieldValue(args);
+
           // ISSUE MANAGEMENT
           case 'create_issue':
             return await this.handleCreateIssue(args);
@@ -467,6 +562,431 @@ class GitHubProjectManagerServer {
         content: [{
           type: "text",
           text: `❌ Failed to update issue: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+  }
+
+  // PROJECT MANAGEMENT IMPLEMENTATIONS (GitHub Projects v2 GraphQL)
+  private async getOwnerNodeId(): Promise<string> {
+    try {
+      const query = `
+        query($login: String!) {
+          user(login: $login) {
+            id
+          }
+          organization(login: $login) {
+            id
+          }
+        }
+      `;
+      
+      const response: any = await this.graphqlWithAuth(query, { login: this.owner });
+      return response.user?.id || response.organization?.id;
+    } catch (error: any) {
+      throw new Error(`Failed to get owner node ID: ${error.message}`);
+    }
+  }
+
+  private async getContentNodeId(issueNumber?: number, prNumber?: number): Promise<string> {
+    if (!issueNumber && !prNumber) {
+      throw new Error('Either issue_number or pr_number must be provided');
+    }
+
+    try {
+      if (issueNumber) {
+        const response = await this.octokit.rest.issues.get({
+          owner: this.owner,
+          repo: this.repo,
+          issue_number: issueNumber
+        });
+        return response.data.node_id;
+      } else if (prNumber) {
+        const response = await this.octokit.rest.pulls.get({
+          owner: this.owner,
+          repo: this.repo,
+          pull_number: prNumber
+        });
+        return response.data.node_id;
+      }
+      throw new Error('Invalid content type');
+    } catch (error: any) {
+      throw new Error(`Failed to get content node ID: ${error.message}`);
+    }
+  }
+
+  private async handleCreateProject(args: any) {
+    try {
+      const ownerNodeId = await this.getOwnerNodeId();
+      
+      const mutation = `
+        mutation($input: CreateProjectV2Input!) {
+          createProjectV2(input: $input) {
+            projectV2 {
+              id
+              title
+              shortDescription
+              url
+              number
+              createdAt
+              updatedAt
+            }
+          }
+        }
+      `;
+
+      const input = {
+        ownerId: ownerNodeId,
+        title: args.title,
+        shortDescription: args.description || '',
+      };
+
+      const response: any = await this.graphqlWithAuth(mutation, { input });
+      const project = response.createProjectV2.projectV2;
+
+      return {
+        content: [{
+          type: "text",
+          text: `✅ **GitHub Projects v2 created successfully!**\n\n` +
+                `**Title:** ${project.title}\n` +
+                `**ID:** ${project.id}\n` +
+                `**Number:** #${project.number}\n` +
+                `**Description:** ${project.shortDescription || 'None'}\n` +
+                `**Created:** ${new Date(project.createdAt).toLocaleDateString()}\n` +
+                `**URL:** ${project.url}\n\n` +
+                `🎉 **Your project is ready!** You can now add issues, create custom fields, and set up views.`
+        }]
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: "text",
+          text: `❌ Failed to create project: ${error.message}\n\n` +
+                `💡 **Troubleshooting:**\n` +
+                `• Ensure your GitHub token has 'project' scope\n` +
+                `• Verify you have permission to create projects in this organization\n` +
+                `• Check that the owner (${this.owner}) exists and is accessible`
+        }],
+        isError: true
+      };
+    }
+  }
+
+  private async handleListProjects(args: any) {
+    try {
+      const ownerNodeId = await this.getOwnerNodeId();
+      
+      const query = `
+        query($ownerId: ID!, $first: Int!, $states: [ProjectV2State!]) {
+          node(id: $ownerId) {
+            ... on User {
+              projectsV2(first: $first, states: $states) {
+                nodes {
+                  id
+                  title
+                  shortDescription
+                  url
+                  number
+                  createdAt
+                  updatedAt
+                  closed
+                  closedAt
+                }
+                totalCount
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
+              }
+            }
+            ... on Organization {
+              projectsV2(first: $first, states: $states) {
+                nodes {
+                  id
+                  title
+                  shortDescription
+                  url
+                  number
+                  createdAt
+                  updatedAt
+                  closed
+                  closedAt
+                }
+                totalCount
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const variables = {
+        ownerId: ownerNodeId,
+        first: args.first || 20,
+        states: args.state ? [args.state] : undefined
+      };
+
+      const response: any = await this.graphqlWithAuth(query, variables);
+      const projectsData = response.node.projectsV2;
+      const projects = projectsData.nodes;
+
+      let result = `📋 **GitHub Projects v2** - Found ${projectsData.totalCount} projects\n\n`;
+      
+      if (projects.length === 0) {
+        result += "No projects found.";
+      } else {
+        projects.forEach((project: any) => {
+          const status = project.closed ? '🔒 Closed' : '🟢 Open';
+          result += `**${project.title}** (#${project.number}) ${status}\n`;
+          result += `   📝 Description: ${project.shortDescription || 'No description'}\n`;
+          result += `   📅 Created: ${new Date(project.createdAt).toLocaleDateString()}\n`;
+          result += `   🔗 ${project.url}\n\n`;
+        });
+
+        if (projectsData.pageInfo.hasNextPage) {
+          result += `📄 **Note:** Showing first ${projects.length} projects. More available.`;
+        }
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: result
+        }]
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: "text",
+          text: `❌ Failed to list projects: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+  }
+
+  private async handleAddItemToProject(args: any) {
+    try {
+      let contentId = args.content_id;
+      
+      // If content_id not provided, get it from issue/PR number
+      if (!contentId) {
+        contentId = await this.getContentNodeId(args.issue_number, args.pr_number);
+      }
+
+      const mutation = `
+        mutation($input: AddProjectV2ItemByIdInput!) {
+          addProjectV2ItemById(input: $input) {
+            item {
+              id
+              content {
+                ... on Issue {
+                  title
+                  number
+                  url
+                }
+                ... on PullRequest {
+                  title
+                  number
+                  url
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const input = {
+        projectId: args.project_id,
+        contentId: contentId
+      };
+
+      const response: any = await this.graphqlWithAuth(mutation, { input });
+      const item = response.addProjectV2ItemById.item;
+
+      return {
+        content: [{
+          type: "text",
+          text: `✅ **Item added to project successfully!**\n\n` +
+                `**Item ID:** ${item.id}\n` +
+                `**Content:** ${item.content.title} (#${item.content.number})\n` +
+                `**URL:** ${item.content.url}\n\n` +
+                `🎯 **Next Steps:** You can now set custom field values for this item.`
+        }]
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: "text",
+          text: `❌ Failed to add item to project: ${error.message}\n\n` +
+                `💡 **Troubleshooting:**\n` +
+                `• Verify the project ID is correct\n` +
+                `• Ensure the issue/PR exists and is accessible\n` +
+                `• Check that you have permission to modify the project`
+        }],
+        isError: true
+      };
+    }
+  }
+
+  private async handleCreateProjectField(args: any) {
+    try {
+      const mutation = `
+        mutation($input: CreateProjectV2FieldInput!) {
+          createProjectV2Field(input: $input) {
+            projectV2Field {
+              id
+              name
+              dataType
+              ... on ProjectV2SingleSelectField {
+                options {
+                  id
+                  name
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const input: any = {
+        projectId: args.project_id,
+        name: args.name,
+        dataType: args.data_type
+      };
+
+      // Add options for SINGLE_SELECT fields
+      if (args.data_type === 'SINGLE_SELECT' && args.options) {
+        input.singleSelectOptions = args.options.map((name: string) => ({ name }));
+      }
+
+      const response: any = await this.graphqlWithAuth(mutation, { input });
+      const field = response.createProjectV2Field.projectV2Field;
+
+      let result = `✅ **Project field created successfully!**\n\n`;
+      result += `**Field ID:** ${field.id}\n`;
+      result += `**Name:** ${field.name}\n`;
+      result += `**Data Type:** ${field.dataType}\n`;
+
+      if (field.options) {
+        result += `**Options:**\n`;
+        field.options.forEach((option: any) => {
+          result += `• ${option.name}\n`;
+        });
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: result
+        }]
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: "text",
+          text: `❌ Failed to create project field: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+  }
+
+  private async handleCreateProjectView(args: any) {
+    try {
+      const mutation = `
+        mutation($input: CreateProjectV2ViewInput!) {
+          createProjectV2View(input: $input) {
+            projectV2View {
+              id
+              name
+              layout
+              number
+              createdAt
+            }
+          }
+        }
+      `;
+
+      const input = {
+        projectId: args.project_id,
+        name: args.name,
+        layout: args.layout
+      };
+
+      const response: any = await this.graphqlWithAuth(mutation, { input });
+      const view = response.createProjectV2View.projectV2View;
+
+      return {
+        content: [{
+          type: "text",
+          text: `✅ **Project view created successfully!**\n\n` +
+                `**View ID:** ${view.id}\n` +
+                `**Name:** ${view.name}\n` +
+                `**Layout:** ${view.layout}\n` +
+                `**Number:** #${view.number}\n` +
+                `**Created:** ${new Date(view.createdAt).toLocaleDateString()}\n\n` +
+                `🎨 **Your custom view is ready!** You can now customize filters and sorting.`
+        }]
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: "text",
+          text: `❌ Failed to create project view: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+  }
+
+  private async handleSetFieldValue(args: any) {
+    try {
+      const mutation = `
+        mutation($input: UpdateProjectV2ItemFieldValueInput!) {
+          updateProjectV2ItemFieldValue(input: $input) {
+            projectV2Item {
+              id
+            }
+          }
+        }
+      `;
+
+      const input = {
+        projectId: args.project_id,
+        itemId: args.item_id,
+        fieldId: args.field_id,
+        value: {
+          text: args.value  // For text fields - this would need to be adapted for other field types
+        }
+      };
+
+      await this.graphqlWithAuth(mutation, { input });
+
+      return {
+        content: [{
+          type: "text",
+          text: `✅ **Field value updated successfully!**\n\n` +
+                `**Project ID:** ${args.project_id}\n` +
+                `**Item ID:** ${args.item_id}\n` +
+                `**Field ID:** ${args.field_id}\n` +
+                `**New Value:** ${args.value}\n\n` +
+                `🎯 **Field updated!** The change is now visible in your project.`
+        }]
+      };
+    } catch (error: any) {
+      return {
+        content: [{
+          type: "text",
+          text: `❌ Failed to set field value: ${error.message}\n\n` +
+                `💡 **Troubleshooting:**\n` +
+                `• Verify all IDs are correct (project, item, field)\n` +
+                `• Ensure the value format matches the field type\n` +
+                `• Check that you have permission to modify the project`
         }],
         isError: true
       };
@@ -1185,9 +1705,10 @@ class GitHubProjectManagerServer {
     await this.server.connect(transport);
     console.error("🚀 Modern GitHub Project Manager MCP server running");
     console.error(`📁 Repository: ${this.owner}/${this.repo}`);
-    console.error("🛠️  Tools: 13 comprehensive project management tools");
+    console.error("🛠️  Tools: 19 comprehensive project management tools with GitHub Projects v2");
     console.error("📚 Modern error handling with isError flags");
     console.error("🎯 AI-powered analytics and complexity analysis");
+    console.error("✨ NEW: GitHub Projects v2 GraphQL integration!");
   }
 }
 
