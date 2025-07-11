@@ -1,7 +1,7 @@
 {
   "name": "github-project-manager",
-  "version": "3.1.0",
-  "description": "Complete GitHub project management MCP server with sprint management, AI-powered analytics, and persistent data storage",
+  "version": "3.2.0",
+  "description": "Modern GitHub project management MCP server with Resources, Prompt Templates, and comprehensive sprint management capabilities",
   "main": "build/index.js",
   "type": "module",
   "scripts": {
@@ -32,6 +32,9 @@
     "ai-powered",
     "analytics",
     "burndown",
-    "velocity"
+    "velocity",
+    "resources",
+    "prompts",
+    "modern-mcp"
   ]
 }
