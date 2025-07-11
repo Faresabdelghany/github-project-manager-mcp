@@ -2,7 +2,7 @@
   "name": "github-project-manager",
   "version": "4.0.0",
   "description": "Comprehensive GitHub project management MCP server with get_project tool for detailed project analysis and AI-powered task management",
-  "main": "build/index.js",
+  "main": "build/index-modular.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
