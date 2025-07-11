@@ -1,7 +1,7 @@
 {
   "name": "github-project-manager",
-  "version": "3.2.0",
-  "description": "Modern GitHub project management MCP server with Resources, Prompt Templates, and comprehensive sprint management capabilities",
+  "version": "2.3.0",
+  "description": "Complete GitHub project management MCP server with all 46 tools, Resources, and Prompt Templates for comprehensive project lifecycle management",
   "main": "build/index.js",
   "type": "module",
   "scripts": {
