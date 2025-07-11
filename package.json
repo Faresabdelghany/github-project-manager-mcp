@@ -1,13 +1,14 @@
 {
   "name": "github-project-manager",
-  "version": "4.0.0",
-  "description": "Comprehensive GitHub project management MCP server with get_project tool for detailed project analysis and AI-powered task management",
-  "main": "build/index-modular.js",
+  "version": "3.0.0",
+  "description": "Modern GitHub project management MCP server with complete tool implementations and AI-powered analytics",
+  "main": "build/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
     "start": "node build/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "node test-server.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.4.0",
@@ -20,5 +21,15 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0"
-  }
+  },
+  "keywords": [
+    "mcp",
+    "github",
+    "project-management",
+    "issues",
+    "milestones",
+    "ai-analytics"
+  ],
+  "author": "Fares Abdelghany",
+  "license": "MIT"
 }
