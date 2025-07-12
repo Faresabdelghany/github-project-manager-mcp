@@ -4,12 +4,20 @@ import * as Milestones from './milestones/index.js';
 import * as Labels from './labels/index.js';
 import * as Analytics from './analytics/index.js';
 import * as Webhooks from './webhooks/index.js';
+import * as Projects from './projects/index.js';
 
 // Export all tool categories
-export { Issues, Milestones, Labels, Analytics, Webhooks };
+export { Issues, Milestones, Labels, Analytics, Webhooks, Projects };
 
 // Tool registry for easy access
 export const toolRegistry = {
+  // Project Management (GitHub Projects v2)
+  'create_project': Projects.createProject,
+  'list_projects': Projects.listProjects,
+  'get_project': Projects.getProject,
+  'update_project': Projects.updateProject,
+  'delete_project': Projects.deleteProject,
+
   // Issue Management
   'create_issue': Issues.createIssue,
   'list_issues': Issues.listIssues,
@@ -49,6 +57,83 @@ export const toolRegistry = {
 
 // Tool definitions for MCP server registration
 export const toolDefinitions = [
+  // PROJECT MANAGEMENT (GitHub Projects v2)
+  {
+    name: 'create_project',
+    description: 'Create a new GitHub Project v2',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Project title' },
+        description: { type: 'string', description: 'Project description' },
+        visibility: { type: 'string', enum: ['PRIVATE', 'PUBLIC'], description: 'Project visibility' },
+        template: { type: 'string', description: 'Project template (optional)' }
+      },
+      required: ['title']
+    }
+  },
+  {
+    name: 'list_projects',
+    description: 'List existing GitHub Projects v2',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Project status filter' },
+        first: { type: 'number', description: 'Number of projects to fetch (max 100, default 20)' },
+        orderBy: { type: 'string', enum: ['CREATED_AT', 'UPDATED_AT', 'NAME'], description: 'Sort field (default: UPDATED_AT)' },
+        direction: { type: 'string', enum: ['ASC', 'DESC'], description: 'Sort direction (default: DESC)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'get_project',
+    description: 'Get detailed GitHub Project v2 information',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_number: { type: 'number', description: 'Project number' },
+        project_id: { type: 'string', description: 'Project ID (alternative to project_number)' },
+        include_fields: { type: 'boolean', description: 'Include custom fields (default: true)' },
+        include_views: { type: 'boolean', description: 'Include project views (default: true)' },
+        include_items: { type: 'boolean', description: 'Include project items (default: true)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'update_project',
+    description: 'Update GitHub Project v2 information',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_number: { type: 'number', description: 'Project number' },
+        project_id: { type: 'string', description: 'Project ID (alternative to project_number)' },
+        title: { type: 'string', description: 'New project title' },
+        description: { type: 'string', description: 'New project description' },
+        readme: { type: 'string', description: 'Project README content' },
+        visibility: { type: 'string', enum: ['PRIVATE', 'PUBLIC'], description: 'Project visibility' },
+        public: { type: 'boolean', description: 'Whether project is public' },
+        closed: { type: 'boolean', description: 'Whether project is closed' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'delete_project',
+    description: 'Delete GitHub Project v2 safely',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_number: { type: 'number', description: 'Project number' },
+        project_id: { type: 'string', description: 'Project ID (alternative to project_number)' },
+        confirm: { type: 'boolean', description: 'Confirmation required for deletion' },
+        force: { type: 'boolean', description: 'Force deletion bypassing safety checks' }
+      },
+      required: []
+    }
+  },
+
   // ISSUE MANAGEMENT
   {
     name: 'create_issue',
