@@ -188,3 +188,125 @@ export async function getUpcomingMilestones(config: GitHubConfig, args: any): Pr
     return GitHubUtils.createErrorResponse(new Error(`Failed to get upcoming milestones: ${(error as Error).message}`));
   }
 }
+
+export async function updateMilestone(config: GitHubConfig, args: any): Promise<ToolResponse> {
+  try {
+    GitHubUtils.validateRepoConfig(config);
+
+    if (!args.milestone_number) {
+      return GitHubUtils.createErrorResponse(new Error('milestone_number is required'));
+    }
+
+    // Build update data object
+    const updateData: any = {
+      owner: config.owner,
+      repo: config.repo,
+      milestone_number: args.milestone_number
+    };
+
+    // Only include fields that are provided
+    if (args.title) updateData.title = args.title;
+    if (args.description !== undefined) updateData.description = args.description;
+    if (args.state) updateData.state = args.state;
+    if (args.due_on !== undefined) {
+      updateData.due_on = args.due_on ? GitHubUtils.formatDateForGitHub(args.due_on) : null;
+    }
+
+    const response = await config.octokit.rest.issues.updateMilestone(updateData);
+
+    const milestone = response.data;
+    const totalIssues = milestone.open_issues + milestone.closed_issues;
+    const progress = totalIssues > 0 ? Math.round((milestone.closed_issues / totalIssues) * 100) : 0;
+
+    let result = `✅ **Milestone updated successfully!**\n\n`;
+    result += `**Title:** ${milestone.title}\n`;
+    result += `**Number:** ${milestone.number}\n`;
+    result += `**Description:** ${milestone.description || 'None'}\n`;
+    result += `**Due Date:** ${milestone.due_on ? new Date(milestone.due_on).toLocaleDateString() : 'Not set'}\n`;
+    result += `**State:** ${milestone.state}\n`;
+    result += `**Progress:** ${progress}% (${milestone.closed_issues}/${totalIssues} issues completed)\n`;
+    result += `**URL:** ${milestone.html_url}\n\n`;
+
+    // Add summary of what was updated
+    const updatedFields = [];
+    if (args.title) updatedFields.push('title');
+    if (args.description !== undefined) updatedFields.push('description');
+    if (args.state) updatedFields.push('state');
+    if (args.due_on !== undefined) updatedFields.push('due date');
+
+    if (updatedFields.length > 0) {
+      result += `**Updated fields:** ${updatedFields.join(', ')}`;
+    }
+
+    return GitHubUtils.createSuccessResponse(result);
+  } catch (error) {
+    return GitHubUtils.createErrorResponse(new Error(`Failed to update milestone: ${(error as Error).message}`));
+  }
+}
+
+export async function deleteMilestone(config: GitHubConfig, args: any): Promise<ToolResponse> {
+  try {
+    GitHubUtils.validateRepoConfig(config);
+
+    if (!args.milestone_number) {
+      return GitHubUtils.createErrorResponse(new Error('milestone_number is required'));
+    }
+
+    // Safety check: require confirmation for deletion
+    if (!args.confirm) {
+      return GitHubUtils.createErrorResponse(new Error('Confirmation required: set confirm=true to delete milestone'));
+    }
+
+    // Get milestone details before deletion for confirmation
+    const milestoneResponse = await config.octokit.rest.issues.getMilestone({
+      owner: config.owner,
+      repo: config.repo,
+      milestone_number: args.milestone_number
+    });
+
+    const milestone = milestoneResponse.data;
+    const totalIssues = milestone.open_issues + milestone.closed_issues;
+
+    // Additional safety check: warn about issues assigned to milestone
+    if (totalIssues > 0 && !args.force) {
+      let warningResult = `⚠️ **Deletion Warning**\n\n`;
+      warningResult += `Milestone "${milestone.title}" (#${milestone.number}) has ${totalIssues} assigned issues:\n`;
+      warningResult += `• ${milestone.open_issues} open issues\n`;
+      warningResult += `• ${milestone.closed_issues} closed issues\n\n`;
+      warningResult += `**Options:**\n`;
+      warningResult += `1. Move issues to another milestone first\n`;
+      warningResult += `2. Use \`force=true\` parameter to delete anyway (issues will lose milestone assignment)\n\n`;
+      warningResult += `**To force deletion:** \`delete_milestone\` with \`milestone_number=${args.milestone_number}\`, \`confirm=true\`, and \`force=true\``;
+
+      return GitHubUtils.createSuccessResponse(warningResult);
+    }
+
+    // Perform deletion
+    await config.octokit.rest.issues.deleteMilestone({
+      owner: config.owner,
+      repo: config.repo,
+      milestone_number: args.milestone_number
+    });
+
+    let result = `✅ **Milestone deleted successfully!**\n\n`;
+    result += `**Deleted milestone:** "${milestone.title}" (#${milestone.number})\n`;
+    result += `**State:** ${milestone.state}\n`;
+    result += `**Due date:** ${milestone.due_on ? new Date(milestone.due_on).toLocaleDateString() : 'Not set'}\n`;
+
+    if (totalIssues > 0) {
+      result += `\n⚠️ **Impact:** ${totalIssues} issues no longer have milestone assignment\n`;
+      result += `**Affected issues:** ${milestone.open_issues} open, ${milestone.closed_issues} closed\n`;
+      result += `\n💡 **Recommendation:** Review affected issues and assign them to appropriate milestones`;
+    } else {
+      result += `\n✨ **Clean deletion:** No issues were affected`;
+    }
+
+    return GitHubUtils.createSuccessResponse(result);
+  } catch (error) {
+    const errorMessage = (error as Error).message;
+    if (errorMessage.includes('Not Found')) {
+      return GitHubUtils.createErrorResponse(new Error(`Milestone #${args.milestone_number} not found`));
+    }
+    return GitHubUtils.createErrorResponse(new Error(`Failed to delete milestone: ${errorMessage}`));
+  }
+}

@@ -44,6 +44,8 @@ export const toolRegistry = {
   // Milestone Management
   'create_milestone': Milestones.createMilestone,
   'list_milestones': Milestones.listMilestones,
+  'update_milestone': Milestones.updateMilestone,
+  'delete_milestone': Milestones.deleteMilestone,
   'get_milestone_metrics': Milestones.getMilestoneMetrics,
   'get_overdue_milestones': Milestones.getOverdueMilestones,
   'get_upcoming_milestones': Milestones.getUpcomingMilestones,
@@ -637,6 +639,34 @@ export const toolDefinitions = [
         state: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Milestone state filter' }
       },
       required: []
+    }
+  },
+  {
+    name: 'update_milestone',
+    description: 'Update existing milestone details and properties',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        milestone_number: { type: 'number', description: 'Milestone number to update' },
+        title: { type: 'string', description: 'New milestone title' },
+        description: { type: 'string', description: 'New milestone description (set to empty string to clear)' },
+        due_on: { type: 'string', description: 'New due date (YYYY-MM-DD) or null to clear' },
+        state: { type: 'string', enum: ['open', 'closed'], description: 'Milestone state (open=active, closed=completed)' }
+      },
+      required: ['milestone_number']
+    }
+  },
+  {
+    name: 'delete_milestone',
+    description: 'Delete milestone safely with confirmation and impact analysis',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        milestone_number: { type: 'number', description: 'Milestone number to delete' },
+        confirm: { type: 'boolean', description: 'Confirmation required for deletion (must be true)' },
+        force: { type: 'boolean', description: 'Force deletion even if milestone has assigned issues (default: false)' }
+      },
+      required: ['milestone_number', 'confirm']
     }
   },
   {
