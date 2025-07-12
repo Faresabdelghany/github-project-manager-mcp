@@ -1,6 +1,6 @@
 # GitHub Project Manager MCP - Modernized v3.0
 
-A **fully modernized** GitHub-integrated project management MCP server with **15 complete working tools**, AI-powered analytics, and modern MCP SDK implementation.
+A **fully modernized** GitHub-integrated project management MCP server with **20 complete working tools**, AI-powered analytics, PRD generation, and modern MCP SDK implementation.
 
 ## 🚀 **What's New in v3.0**
 
@@ -16,6 +16,7 @@ A **fully modernized** GitHub-integrated project management MCP server with **15
 - **Milestone Management** (6 tools): create, list, metrics, overdue, upcoming  
 - **Label Management** (2 tools): create, list
 - **Advanced Analytics** (2 tools): task complexity analysis, repository summary
+- **📋 Advanced Project Planning & PRD Tools** (5 tools): generate PRD, parse PRD, enhance PRD, add feature, create roadmap
 - **MCP Resources**: Repository information exposure
 - **MCP Prompts**: Sprint planning and issue triage templates
 
@@ -51,6 +52,15 @@ A **fully modernized** GitHub-integrated project management MCP server with **15
 • get_repository_summary  - Comprehensive project health analysis
 ```
 
+### **📋 Advanced Project Planning & PRD Tools**
+```
+• generate_prd    - Generate comprehensive Product Requirements Documents
+• parse_prd       - Parse PRD content and create actionable development tasks
+• enhance_prd     - Enhance existing PRDs with market analysis and recommendations
+• add_feature     - Add new features with comprehensive impact analysis
+• create_roadmap  - Create project roadmaps with timeline visualization
+```
+
 ### **Label Management**
 ```
 • create_label - Create color-coded labels with descriptions
@@ -80,6 +90,18 @@ A **fully modernized** GitHub-integrated project management MCP server with **15
 - **Issue categorization** (Epic, Feature, Bug, Task, etc.)
 - **Recent activity trends**
 - **Overall health scoring** (0-100)
+
+### **📋 Advanced Project Planning & PRD Features**
+- **AI-generated PRDs** with comprehensive templates including:
+  - Functional, non-functional, and technical requirements
+  - User stories and acceptance criteria
+  - Risk analysis and dependency mapping
+  - Timeline planning and success metrics
+- **PRD parsing and task extraction** from existing documents
+- **PRD enhancement** with market analysis, technical recommendations
+- **Feature impact analysis** with business, technical, and user impact scoring
+- **Project roadmaps** with timeline visualization and milestone mapping
+- **Comprehensive implementation planning** with phase breakdown
 
 ## 🔧 **Installation & Setup**
 
@@ -148,6 +170,15 @@ Give me a complete repository health summary with trends
 What's the current project completion rate?
 ```
 
+### **📋 Advanced Project Planning & PRD Tools**
+```
+Generate a PRD for "Mobile Learning App" with features ["User authentication", "Course catalog", "Video streaming"]
+Parse the PRD in issue #42 and create development tasks
+Enhance the existing PRD with market analysis and technical recommendations
+Add a new "Real-time Chat" feature with comprehensive impact analysis
+Create a quarterly roadmap showing all milestones and dependencies
+```
+
 ### **Smart Prompts**
 ```
 Use the "plan-sprint" prompt with goals ["Database setup", "User auth"] and team ["alice", "bob"]
@@ -180,10 +211,11 @@ Use the "triage-issue" prompt for issue "Bug in login system"
 | Feature | v2.x (Old) | v3.0 (New) |
 |---------|------------|------------|
 | **SDK** | Manual `Server` setup | Modern `McpServer` |
-| **Tools** | 50% stub implementations | 100% working tools |
+| **Tools** | 50% stub implementations | 100% working tools (20 total) |
 | **Validation** | Manual parameter checking | Zod schema validation |
 | **Error Handling** | Inconsistent responses | Standardized with `isError` |
 | **Analytics** | Basic placeholder logic | AI-powered real analysis |
+| **PRD & Planning** | Missing entirely | Complete 5-tool suite |
 | **Resources** | None | Repository data exposure |
 | **Prompts** | None | Sprint planning & triage |
 | **Code Quality** | Monolithic, repetitive | Clean, maintainable |
@@ -210,9 +242,10 @@ npm run test
 
 ## 🎉 **Success Metrics**
 
-✅ **15/15 tools fully functional** (was 6/24)  
+✅ **20/20 tools fully functional** (was 6/24 in v2.x)  
 ✅ **Modern MCP SDK** implementation  
 ✅ **Real AI-powered analytics** 
+✅ **📋 Complete PRD & Planning Suite** with 5 comprehensive tools
 ✅ **Comprehensive error handling**  
 ✅ **Resources and prompts** added
 ✅ **Production-ready code quality**

@@ -5,9 +5,10 @@ import * as Labels from './labels/index.js';
 import * as Analytics from './analytics/index.js';
 import * as Webhooks from './webhooks/index.js';
 import * as Projects from './projects/index.js';
+import * as Planning from './planning/index.js';
 
 // Export all tool categories
-export { Issues, Milestones, Labels, Analytics, Webhooks, Projects };
+export { Issues, Milestones, Labels, Analytics, Webhooks, Projects, Planning };
 
 // Tool registry for easy access
 export const toolRegistry = {
@@ -38,6 +39,13 @@ export const toolRegistry = {
   // Analytics
   'analyze_task_complexity': Analytics.analyzeTaskComplexity,
   'get_repository_summary': Analytics.getRepositorySummary,
+
+  // Advanced Project Planning & PRD Tools
+  'generate_prd': Planning.generatePRD,
+  'parse_prd': Planning.parsePRD,
+  'enhance_prd': Planning.enhancePRD,
+  'add_feature': Planning.addFeature,
+  'create_roadmap': Planning.createRoadmap,
 
   // Webhook Management (Phase 3.1)
   'setup_webhooks': Webhooks.setupWebhooks,
@@ -131,6 +139,94 @@ export const toolDefinitions = [
         force: { type: 'boolean', description: 'Force deletion bypassing safety checks' }
       },
       required: []
+    }
+  },
+
+  // ADVANCED PROJECT PLANNING & PRD TOOLS
+  {
+    name: 'generate_prd',
+    description: 'Generate comprehensive Product Requirements Documents with templates and best practices',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'PRD title' },
+        description: { type: 'string', description: 'Product overview and description' },
+        features: { type: 'array', items: { type: 'string' }, description: 'List of key features to include' },
+        target_audience: { type: 'array', items: { type: 'string' }, description: 'Target user personas (default: developers, end-users)' },
+        objectives: { type: 'array', items: { type: 'string' }, description: 'Business objectives and goals' },
+        complexity: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Product complexity level (default: medium)' },
+        timeline: { type: 'string', description: 'Expected timeline (default: 3-6 months)' },
+        format: { type: 'string', enum: ['markdown', 'json'], description: 'Output format (default: markdown)' },
+        create_issue: { type: 'boolean', description: 'Create GitHub issue with PRD (default: false)' }
+      },
+      required: ['title']
+    }
+  },
+  {
+    name: 'parse_prd',
+    description: 'Parse existing PRD content and generate actionable development tasks and epics',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prd_content: { type: 'string', description: 'PRD content text to parse' },
+        issue_number: { type: 'number', description: 'GitHub issue number containing PRD (alternative to prd_content)' },
+        create_tasks: { type: 'boolean', description: 'Create GitHub issues for extracted tasks (default: true)' },
+        task_format: { type: 'string', enum: ['github_issues', 'markdown'], description: 'Output format for tasks (default: github_issues)' },
+        sprint_assignment: { type: 'boolean', description: 'Assign tasks to current sprint (default: false)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'enhance_prd',
+    description: 'Enhance existing PRD with market analysis, technical recommendations, and risk assessment',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issue_number: { type: 'number', description: 'GitHub issue number containing PRD' },
+        prd_content: { type: 'string', description: 'PRD content text (alternative to issue_number)' },
+        enhancement_type: { type: 'string', enum: ['comprehensive', 'technical', 'business', 'market'], description: 'Type of enhancement (default: comprehensive)' },
+        include_market_analysis: { type: 'boolean', description: 'Include competitive and market analysis (default: true)' },
+        include_technical_analysis: { type: 'boolean', description: 'Include architecture and tech stack recommendations (default: true)' },
+        include_risk_analysis: { type: 'boolean', description: 'Include comprehensive risk assessment (default: true)' },
+        include_metrics: { type: 'boolean', description: 'Include detailed success metrics and KPIs (default: true)' },
+        update_issue: { type: 'boolean', description: 'Update the original GitHub issue with enhancements (default: false)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'add_feature',
+    description: 'Add new feature to existing project with comprehensive impact analysis and implementation planning',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        feature_name: { type: 'string', description: 'Name of the new feature' },
+        feature_description: { type: 'string', description: 'Detailed description of the feature' },
+        target_milestone: { type: 'number', description: 'Target milestone for the feature' },
+        impact_scope: { type: 'string', enum: ['minimal', 'moderate', 'full'], description: 'Scope of impact analysis (default: full)' },
+        create_issues: { type: 'boolean', description: 'Create GitHub issues for implementation tasks (default: true)' },
+        assign_team: { type: 'array', items: { type: 'string' }, description: 'Team members to assign to the feature' },
+        priority: { type: 'string', enum: ['low', 'medium', 'high', 'critical'], description: 'Feature priority level (default: medium)' },
+        estimate_effort: { type: 'boolean', description: 'Include effort estimation and timeline (default: true)' }
+      },
+      required: ['feature_name']
+    }
+  },
+  {
+    name: 'create_roadmap',
+    description: 'Create comprehensive project roadmaps with timeline visualization and milestone mapping',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Roadmap title' },
+        time_horizon: { type: 'string', enum: ['monthly', 'quarterly', 'yearly'], description: 'Timeline granularity (default: quarterly)' },
+        include_completed: { type: 'boolean', description: 'Include completed milestones and issues (default: false)' },
+        include_dependencies: { type: 'boolean', description: 'Show issue dependencies and critical path (default: true)' },
+        focus_areas: { type: 'array', items: { type: 'string' }, description: 'Specific areas to focus on in roadmap' },
+        format: { type: 'string', enum: ['markdown', 'json'], description: 'Output format (default: markdown)' }
+      },
+      required: ['title']
     }
   },
 
