@@ -19,14 +19,6 @@ export const toolRegistry = {
   'update_project': Projects.updateProject,
   'delete_project': Projects.deleteProject,
 
-  // Project Structure & Views Management (Epic #69)
-  'create_project_field': Projects.createProjectField,
-  'list_project_fields': Projects.listProjectFields,
-  'update_project_field': Projects.updateProjectField,
-  'create_project_view': Projects.createProjectView,
-  'list_project_views': Projects.listProjectViews,
-  'update_project_view': Projects.updateProjectView,
-
   // Issue Management
   'create_issue': Issues.createIssue,
   'list_issues': Issues.listIssues,
@@ -54,6 +46,7 @@ export const toolRegistry = {
   'enhance_prd': Planning.enhancePRD,
   'add_feature': Planning.addFeature,
   'create_roadmap': Planning.createRoadmap,
+  'create_traceability_matrix': Planning.createTraceabilityMatrix,
 
   // Webhook Management (Phase 3.1)
   'setup_webhooks': Webhooks.setupWebhooks,
@@ -233,6 +226,45 @@ export const toolDefinitions = [
         include_dependencies: { type: 'boolean', description: 'Show issue dependencies and critical path (default: true)' },
         focus_areas: { type: 'array', items: { type: 'string' }, description: 'Specific areas to focus on in roadmap' },
         format: { type: 'string', enum: ['markdown', 'json'], description: 'Output format (default: markdown)' }
+      },
+      required: ['title']
+    }
+  },
+  {
+    name: 'create_traceability_matrix',
+    description: 'Create comprehensive requirements traceability matrices linking requirements to features to implementation tasks',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Traceability matrix title' },
+        source_types: { 
+          type: 'array', 
+          items: { type: 'string', enum: ['issues', 'prd', 'milestones', 'pull_requests', 'labels'] }, 
+          description: 'Sources to analyze for requirements (default: all)'
+        },
+        traceability_direction: { 
+          type: 'string', 
+          enum: ['forward', 'backward', 'bidirectional'], 
+          description: 'Traceability direction (default: bidirectional)'
+        },
+        include_coverage_analysis: { type: 'boolean', description: 'Include gap and coverage analysis (default: true)' },
+        include_impact_analysis: { type: 'boolean', description: 'Include change impact analysis (default: true)' },
+        include_dependency_graph: { type: 'boolean', description: 'Include visual dependency mapping (default: true)' },
+        filter_labels: { type: 'array', items: { type: 'string' }, description: 'Filter by specific labels' },
+        filter_milestones: { type: 'array', items: { type: 'string' }, description: 'Filter by specific milestones' },
+        filter_status: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Filter by issue status (default: all)' },
+        output_format: { 
+          type: 'string', 
+          enum: ['markdown', 'json', 'html', 'csv'], 
+          description: 'Output format (default: markdown)'
+        },
+        export_path: { type: 'string', description: 'Path to export the matrix (optional)' },
+        create_issue: { type: 'boolean', description: 'Create GitHub issue with traceability matrix (default: false)' },
+        compliance_level: { 
+          type: 'string', 
+          enum: ['basic', 'standard', 'enterprise'], 
+          description: 'Compliance reporting level (default: standard)'
+        }
       },
       required: ['title']
     }
