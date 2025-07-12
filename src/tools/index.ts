@@ -6,9 +6,10 @@ import * as Analytics from './analytics/index.js';
 import * as Webhooks from './webhooks/index.js';
 import * as Projects from './projects/index.js';
 import * as Planning from './planning/index.js';
+import * as TaskManagement from './task-management/index.js';
 
 // Export all tool categories
-export { Issues, Milestones, Labels, Analytics, Webhooks, Projects, Planning };
+export { Issues, Milestones, Labels, Analytics, Webhooks, Projects, Planning, TaskManagement };
 
 // Tool registry for easy access
 export const toolRegistry = {
@@ -54,6 +55,10 @@ export const toolRegistry = {
   // Analytics
   'analyze_task_complexity': Analytics.analyzeTaskComplexity,
   'get_repository_summary': Analytics.getRepositorySummary,
+
+  // Task Management (AI-Powered)
+  'get_next_task': TaskManagement.getNextTask,
+  'expand_task': TaskManagement.expandTask,
 
   // Advanced Project Planning & PRD Tools
   'generate_prd': Planning.generatePRD,
@@ -711,6 +716,43 @@ export const toolDefinitions = [
         include_trends: { type: 'boolean', description: 'Include trend analysis (default: true)' }
       },
       required: []
+    }
+  },
+
+  // TASK MANAGEMENT (AI-Powered)
+  {
+    name: 'get_next_task',
+    description: 'AI-powered recommendations for next tasks to work on based on priority, urgency, team availability, and skill matching',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assignee: { type: 'string', description: 'Filter recommendations for specific assignee' },
+        priority_filter: { type: 'string', enum: ['high', 'medium', 'low', 'all'], description: 'Minimum priority level (default: all)' },
+        max_recommendations: { type: 'number', description: 'Maximum number of task recommendations (default: 5)' },
+        include_blocked: { type: 'boolean', description: 'Include blocked or waiting tasks (default: false)' },
+        team_members: { type: 'array', items: { type: 'string' }, description: 'List of team member GitHub usernames for workload analysis' },
+        context_switch_penalty: { type: 'number', description: 'Penalty factor for context switching (0.0-1.0, default: 0.1)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'expand_task',
+    description: 'Break down complex tasks into manageable subtasks using AI-powered intelligent decomposition and template-based patterns',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issue_number: { type: 'number', description: 'Issue number to expand into subtasks' },
+        create_sub_issues: { type: 'boolean', description: 'Create GitHub issues for each subtask (default: true)' },
+        assign_to_sprint: { type: 'boolean', description: 'Assign subtasks to current sprint (default: false)' },
+        target_milestone: { type: 'number', description: 'Target milestone for subtasks' },
+        max_subtasks: { type: 'number', description: 'Maximum number of subtasks to create (default: 8)' },
+        min_complexity: { type: 'number', description: 'Minimum complexity for subtasks in story points (default: 1)' },
+        template_type: { type: 'string', enum: ['auto', 'feature', 'bug', 'refactor'], description: 'Decomposition template to use (default: auto)' },
+        include_checklist: { type: 'boolean', description: 'Include task breakdown checklist in parent issue (default: true)' },
+        force: { type: 'boolean', description: 'Force expansion even for low complexity tasks (default: false)' }
+      },
+      required: ['issue_number']
     }
   },
 
