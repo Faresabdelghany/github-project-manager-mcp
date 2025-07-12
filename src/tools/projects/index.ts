@@ -13,3 +13,11 @@ export { removeProjectItem } from './remove_project_item.js';
 export { listProjectItems } from './list_project_items.js';
 export { setFieldValue } from './set_field_value.js';
 export { getFieldValue } from './get_field_value.js';
+
+// Project Structure & Views Management Tools (Epic #69)
+export { createProjectField } from './create_project_field.js';
+export { listProjectFields } from './list_project_fields.js';
+export { updateProjectField } from './update_project_field.js';
+export { createProjectView } from './create_project_view.js';
+export { listProjectViews } from './list_project_views.js';
+export { updateProjectView } from './update_project_view.js';

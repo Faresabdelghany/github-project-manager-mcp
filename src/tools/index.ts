@@ -26,6 +26,14 @@ export const toolRegistry = {
   'set_field_value': Projects.setFieldValue,
   'get_field_value': Projects.getFieldValue,
 
+  // Project Structure & Views Management (Epic #69)
+  'create_project_field': Projects.createProjectField,
+  'list_project_fields': Projects.listProjectFields,
+  'update_project_field': Projects.updateProjectField,
+  'create_project_view': Projects.createProjectView,
+  'list_project_views': Projects.listProjectViews,
+  'update_project_view': Projects.updateProjectView,
+
   // Issue Management
   'create_issue': Issues.createIssue,
   'list_issues': Issues.listIssues,
@@ -308,6 +316,107 @@ export const toolDefinitions = [
         },
         include_field_history: { type: 'boolean', description: 'Include field change history and audit trail (default: false)' },
         format: { type: 'string', enum: ['detailed', 'simple', 'json'], description: 'Output format (default: detailed)' }
+      },
+      required: []
+    }
+  },
+
+  // PROJECT STRUCTURE & VIEWS MANAGEMENT (Epic #69)
+  {
+    name: 'create_project_field',
+    description: 'Create custom fields for GitHub Projects v2',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+        project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
+        name: { type: 'string', description: 'Field name' },
+        data_type: { type: 'string', enum: ['TEXT', 'NUMBER', 'DATE', 'SINGLE_SELECT', 'ITERATION'], description: 'Field data type' },
+        options: { type: 'array', items: { type: 'string' }, description: 'Options for single select fields' },
+        description: { type: 'string', description: 'Field description' }
+      },
+      required: ['name', 'data_type']
+    }
+  },
+  {
+    name: 'list_project_fields',
+    description: 'List all custom fields in a GitHub Projects v2',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+        project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
+        include_system_fields: { type: 'boolean', description: 'Include system fields (default: false)' },
+        detailed_view: { type: 'boolean', description: 'Include detailed field information (default: true)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'update_project_field',
+    description: 'Update custom fields in GitHub Projects v2',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+        project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
+        field_id: { type: 'string', description: 'Field ID to update' },
+        field_name: { type: 'string', description: 'Field name to update (alternative to field_id)' },
+        name: { type: 'string', description: 'New field name' },
+        options: { type: 'array', items: { type: 'string' }, description: 'New options for single select fields' },
+        add_options: { type: 'array', items: { type: 'string' }, description: 'Options to add' },
+        remove_options: { type: 'array', items: { type: 'string' }, description: 'Options to remove' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'create_project_view',
+    description: 'Create custom views for GitHub Projects v2',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+        project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
+        name: { type: 'string', description: 'View name' },
+        layout: { type: 'string', enum: ['BOARD_LAYOUT', 'TABLE_LAYOUT', 'ROADMAP_LAYOUT'], description: 'View layout type' },
+        description: { type: 'string', description: 'View description' },
+        filter: { type: 'string', description: 'Filter criteria for the view' },
+        sort_by: { type: 'string', description: 'Field to sort by' },
+        group_by: { type: 'string', description: 'Field to group by' }
+      },
+      required: ['name', 'layout']
+    }
+  },
+  {
+    name: 'list_project_views',
+    description: 'List all views in a GitHub Projects v2',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+        project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
+        include_system_views: { type: 'boolean', description: 'Include system views (default: true)' },
+        detailed_view: { type: 'boolean', description: 'Include detailed view information (default: true)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'update_project_view',
+    description: 'Update custom views in GitHub Projects v2',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+        project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
+        view_id: { type: 'string', description: 'View ID to update' },
+        view_name: { type: 'string', description: 'View name to update (alternative to view_id)' },
+        name: { type: 'string', description: 'New view name' },
+        description: { type: 'string', description: 'New view description' },
+        filter: { type: 'string', description: 'New filter criteria' },
+        sort_by: { type: 'string', description: 'New field to sort by' },
+        group_by: { type: 'string', description: 'New field to group by' }
       },
       required: []
     }
