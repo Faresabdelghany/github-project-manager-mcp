@@ -1,13 +1,18 @@
 {
   "name": "github-project-manager",
-  "version": "2.3.0",
-  "description": "Complete GitHub project management MCP server with all 46 tools, Resources, and Prompt Templates for comprehensive project lifecycle management",
+  "version": "3.1.0",
+  "description": "Comprehensive GitHub project management MCP server with real-time webhooks and live updates - Phase 3.1 Complete",
   "main": "build/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
     "start": "node build/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "demo": "node build/demos/phase-3.1-demo.js",
+    "test-webhooks": "npm run build && node -e \"import('./build/demos/phase-3.1-demo.js').then(m => m.runPhase31Demo())\"",
+    "clean": "rm -rf build/",
+    "lint": "echo 'Linting not configured yet'",
+    "format": "echo 'Formatting not configured yet'"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.4.0",
@@ -24,17 +29,55 @@
   "keywords": [
     "github",
     "project-management",
-    "sprint-management",
-    "agile",
-    "scrum",
     "mcp",
+    "webhooks",
+    "real-time",
+    "automation",
+    "agile",
+    "sprint-management",
+    "issue-tracking",
+    "milestone-management",
+    "live-updates",
     "claude",
-    "ai-powered",
-    "analytics",
-    "burndown",
-    "velocity",
-    "resources",
-    "prompts",
-    "modern-mcp"
-  ]
+    "ai-tools"
+  ],
+  "author": "Fares Abdelghany",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Faresabdelghany/github-project-manager-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Faresabdelghany/github-project-manager-mcp/issues"
+  },
+  "homepage": "https://github.com/Faresabdelghany/github-project-manager-mcp#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "build/",
+    "README.md",
+    "LICENSE",
+    "docs/",
+    "demos/"
+  ],
+  "mcp": {
+    "server": {
+      "name": "github-project-manager",
+      "version": "3.1.0",
+      "description": "Complete GitHub project management with real-time webhooks and live updates",
+      "capabilities": [
+        "issue-management",
+        "milestone-tracking", 
+        "label-management",
+        "analytics",
+        "webhook-management",
+        "live-updates",
+        "real-time-metrics",
+        "activity-monitoring",
+        "repository-health"
+      ],
+      "phase": "3.1-complete"
+    }
+  }
 }
