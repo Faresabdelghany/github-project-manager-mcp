@@ -19,6 +19,14 @@ export const toolRegistry = {
   'update_project': Projects.updateProject,
   'delete_project': Projects.deleteProject,
 
+  // Project Structure & Views Management (Epic #69)
+  'create_project_field': Projects.createProjectField,
+  'list_project_fields': Projects.listProjectFields,
+  'update_project_field': Projects.updateProjectField,
+  'create_project_view': Projects.createProjectView,
+  'list_project_views': Projects.listProjectViews,
+  'update_project_view': Projects.updateProjectView,
+
   // Issue Management
   'create_issue': Issues.createIssue,
   'list_issues': Issues.listIssues,
