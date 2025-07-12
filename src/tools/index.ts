@@ -19,6 +19,13 @@ export const toolRegistry = {
   'update_project': Projects.updateProject,
   'delete_project': Projects.deleteProject,
 
+  // Project Items Management (Issue #70)
+  'add_project_item': Projects.addProjectItem,
+  'remove_project_item': Projects.removeProjectItem,
+  'list_project_items': Projects.listProjectItems,
+  'set_field_value': Projects.setFieldValue,
+  'get_field_value': Projects.getFieldValue,
+
   // Issue Management
   'create_issue': Issues.createIssue,
   'list_issues': Issues.listIssues,
@@ -46,6 +53,7 @@ export const toolRegistry = {
   'enhance_prd': Planning.enhancePRD,
   'add_feature': Planning.addFeature,
   'create_roadmap': Planning.createRoadmap,
+  'create_traceability_matrix': Planning.createTraceabilityMatrix,
 
   // Webhook Management (Phase 3.1)
   'setup_webhooks': Webhooks.setupWebhooks,
@@ -142,6 +150,169 @@ export const toolDefinitions = [
     }
   },
 
+  // PROJECT ITEMS MANAGEMENT (Issue #70)
+  {
+    name: 'add_project_item',
+    description: 'Add issues, pull requests, or draft items to GitHub Projects v2',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+        project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
+        content_id: { type: 'string', description: 'Issue or Pull Request Node ID' },
+        content_type: { type: 'string', enum: ['issue', 'pull_request', 'draft'], description: 'Type of content to add' },
+        issue_number: { type: 'number', description: 'Issue number (alternative to content_id)' },
+        pr_number: { type: 'number', description: 'Pull request number (alternative to content_id)' },
+        draft_title: { type: 'string', description: 'Title for draft item (required if content_type is draft)' },
+        draft_body: { type: 'string', description: 'Body for draft item (optional)' },
+        bulk_items: { 
+          type: 'array', 
+          items: {
+            type: 'object',
+            properties: {
+              content_id: { type: 'string' },
+              issue_number: { type: 'number' },
+              pr_number: { type: 'number' },
+              type: { type: 'string', enum: ['issue', 'pull_request'] }
+            }
+          },
+          description: 'Array of items to add in bulk'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'remove_project_item',
+    description: 'Remove items from GitHub Projects v2 safely',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+        project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
+        item_id: { type: 'string', description: 'Project item ID to remove' },
+        issue_number: { type: 'number', description: 'Issue number (alternative to item_id)' },
+        pr_number: { type: 'number', description: 'Pull request number (alternative to item_id)' },
+        bulk_items: { 
+          type: 'array', 
+          items: {
+            type: 'object',
+            properties: {
+              item_id: { type: 'string' },
+              issue_number: { type: 'number' },
+              pr_number: { type: 'number' }
+            }
+          },
+          description: 'Array of items to remove in bulk'
+        },
+        removal_reason: { type: 'string', description: 'Optional reason for removing items from project' },
+        archive_instead: { type: 'boolean', description: 'Archive vs permanent deletion (default: false)' },
+        confirm: { type: 'boolean', description: 'Confirmation required for deletion (must be true)' }
+      },
+      required: ['confirm']
+    }
+  },
+  {
+    name: 'list_project_items',
+    description: 'List all items in a GitHub Projects v2 with advanced filtering',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+        project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
+        item_type: { type: 'string', enum: ['issue', 'pull_request', 'draft', 'all'], description: 'Filter by item type (default: all)' },
+        state: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Filter by item state (default: all)' },
+        search_title: { type: 'string', description: 'Search items by title' },
+        assignee: { type: 'string', description: 'Filter by assignee username' },
+        labels: { type: 'array', items: { type: 'string' }, description: 'Filter by labels' },
+        sort_by: { type: 'string', enum: ['created', 'updated', 'title', 'number'], description: 'Sort criteria' },
+        order: { type: 'string', enum: ['asc', 'desc'], description: 'Sort order (default: desc)' },
+        first: { type: 'number', description: 'Number of items to fetch (max 100, default 100)' },
+        include_field_values: { type: 'boolean', description: 'Include custom field values (default: true)' },
+        detailed_view: { type: 'boolean', description: 'Include detailed item information (default: false)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'set_field_value',
+    description: 'Set custom field values for GitHub Projects v2 items',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+        project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
+        item_id: { type: 'string', description: 'Project item ID' },
+        issue_number: { type: 'number', description: 'Issue number (alternative to item_id)' },
+        pr_number: { type: 'number', description: 'Pull request number (alternative to item_id)' },
+        field_name: { type: 'string', description: 'Field name to update' },
+        field_id: { type: 'string', description: 'Field ID to update (alternative to field_name)' },
+        value: { description: 'Value to set (type depends on field type)' },
+        field_type: { type: 'string', enum: ['text', 'number', 'date', 'single_select', 'iteration'], description: 'Field type hint' },
+        bulk_updates: { 
+          type: 'array', 
+          items: {
+            type: 'object',
+            properties: {
+              item_id: { type: 'string' },
+              issue_number: { type: 'number' },
+              pr_number: { type: 'number' },
+              field_updates: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    field_name: { type: 'string' },
+                    field_id: { type: 'string' },
+                    value: {},
+                    field_type: { type: 'string' }
+                  },
+                  required: ['value']
+                }
+              }
+            },
+            required: ['field_updates']
+          },
+          description: 'Array of items with field updates for bulk operations'
+        },
+        validate_before_update: { type: 'boolean', description: 'Validate field value before updating (default: false)' }
+      },
+      required: ['value']
+    }
+  },
+  {
+    name: 'get_field_value',
+    description: 'Get custom field values for GitHub Projects v2 items',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'GitHub Project v2 ID' },
+        project_number: { type: 'number', description: 'Project number (alternative to project_id)' },
+        item_id: { type: 'string', description: 'Project item ID' },
+        issue_number: { type: 'number', description: 'Issue number (alternative to item_id)' },
+        pr_number: { type: 'number', description: 'Pull request number (alternative to item_id)' },
+        field_name: { type: 'string', description: 'Specific field name to get' },
+        field_id: { type: 'string', description: 'Specific field ID to get (alternative to field_name)' },
+        all_fields: { type: 'boolean', description: 'Get all field values for the item (default: false)' },
+        bulk_items: { 
+          type: 'array', 
+          items: {
+            type: 'object',
+            properties: {
+              item_id: { type: 'string' },
+              issue_number: { type: 'number' },
+              pr_number: { type: 'number' }
+            }
+          },
+          description: 'Array of items to get field values for in bulk'
+        },
+        include_field_history: { type: 'boolean', description: 'Include field change history and audit trail (default: false)' },
+        format: { type: 'string', enum: ['detailed', 'simple', 'json'], description: 'Output format (default: detailed)' }
+      },
+      required: []
+    }
+  },
+
   // ADVANCED PROJECT PLANNING & PRD TOOLS
   {
     name: 'generate_prd',
@@ -225,6 +396,45 @@ export const toolDefinitions = [
         include_dependencies: { type: 'boolean', description: 'Show issue dependencies and critical path (default: true)' },
         focus_areas: { type: 'array', items: { type: 'string' }, description: 'Specific areas to focus on in roadmap' },
         format: { type: 'string', enum: ['markdown', 'json'], description: 'Output format (default: markdown)' }
+      },
+      required: ['title']
+    }
+  },
+  {
+    name: 'create_traceability_matrix',
+    description: 'Create comprehensive requirements traceability matrices linking requirements to features to implementation tasks',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Traceability matrix title' },
+        source_types: { 
+          type: 'array', 
+          items: { type: 'string', enum: ['issues', 'prd', 'milestones', 'pull_requests', 'labels'] }, 
+          description: 'Sources to analyze for requirements (default: all)'
+        },
+        traceability_direction: { 
+          type: 'string', 
+          enum: ['forward', 'backward', 'bidirectional'], 
+          description: 'Traceability direction (default: bidirectional)'
+        },
+        include_coverage_analysis: { type: 'boolean', description: 'Include gap and coverage analysis (default: true)' },
+        include_impact_analysis: { type: 'boolean', description: 'Include change impact analysis (default: true)' },
+        include_dependency_graph: { type: 'boolean', description: 'Include visual dependency mapping (default: true)' },
+        filter_labels: { type: 'array', items: { type: 'string' }, description: 'Filter by specific labels' },
+        filter_milestones: { type: 'array', items: { type: 'string' }, description: 'Filter by specific milestones' },
+        filter_status: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Filter by issue status (default: all)' },
+        output_format: { 
+          type: 'string', 
+          enum: ['markdown', 'json', 'html', 'csv'], 
+          description: 'Output format (default: markdown)'
+        },
+        export_path: { type: 'string', description: 'Path to export the matrix (optional)' },
+        create_issue: { type: 'boolean', description: 'Create GitHub issue with traceability matrix (default: false)' },
+        compliance_level: { 
+          type: 'string', 
+          enum: ['basic', 'standard', 'enterprise'], 
+          description: 'Compliance reporting level (default: standard)'
+        }
       },
       required: ['title']
     }

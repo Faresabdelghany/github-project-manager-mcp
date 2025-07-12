@@ -1,15 +1,14 @@
 import { GitHubConfig, ToolResponse } from '../../shared/types.js';
 import { validateRepoConfig, handleToolError, createSuccessResponse } from '../../utils/helpers.js';
 import { 
-  PRD_GENERATION_SYSTEM_PROMPT,
+  formatPrompt, 
+  PRD_PROMPT_CONFIGS,
   GENERATE_PRD_FROM_IDEA_PROMPT,
   ENHANCE_EXISTING_PRD_PROMPT,
   EXTRACT_FEATURES_FROM_PRD_PROMPT,
   VALIDATE_PRD_COMPLETENESS_PROMPT,
-  GENERATE_USER_STORIES_PROMPT,
-  formatPrompt,
-  PRD_PROMPT_CONFIGS
-} from '../../prompts/PRDGenerationPrompts.js';
+  GENERATE_USER_STORIES_PROMPT
+} from './prompts.js';
 
 /**
  * PRD Template Structure
@@ -685,7 +684,7 @@ export async function createRoadmap(config: GitHubConfig, args: any): Promise<To
   }
 }
 
-// Helper functions for PRD generation with AI enhancement
+// Helper functions for PRD generation
 function generateComprehensivePRD(params: any): PRDTemplate {
   const {
     title,
@@ -721,460 +720,8 @@ function generateComprehensivePRD(params: any): PRDTemplate {
   };
 }
 
-// AI-enhanced helper functions
-async function extractTasksFromPRDWithAI(prdContent: string): Promise<any[]> {
-  const tasks: any[] = [];
-  
-  // Enhanced extraction with AI-inspired patterns
-  const patterns = [
-    // Feature patterns
-    /(?:feature|functionality|capability|component):\s*(.+)/gi,
-    /(?:implement|build|create|develop)\s+(.+)/gi,
-    /(?:user can|users? should be able to)\s+(.+)/gi,
-    // Requirement patterns
-    /(?:requirement|must|should|shall):\s*(.+)/gi,
-    /(?:the system|application|platform)\s+(?:must|should|shall)\s+(.+)/gi,
-    // Epic patterns
-    /(?:epic|theme|initiative):\s*(.+)/gi
-  ];
-
-  patterns.forEach(pattern => {
-    let match;
-    while ((match = pattern.exec(prdContent)) !== null) {
-      const taskTitle = match[1].trim();
-      if (taskTitle.length > 10 && taskTitle.length < 100) {
-        tasks.push({
-          title: `Implement ${taskTitle}`,
-          description: `Implementation of ${taskTitle} functionality as specified in PRD`,
-          category: categorizeTaskByContent(taskTitle),
-          priority: calculatePriorityFromContent(taskTitle),
-          complexity: calculateComplexityFromContent(taskTitle),
-          effort: estimateEffortFromComplexity(calculateComplexityFromContent(taskTitle)),
-          dependencies: extractDependenciesFromContent(taskTitle, prdContent),
-          technicalConsiderations: extractTechnicalConsiderations(taskTitle)
-        });
-      }
-    }
-  });
-
-  // Add structured default tasks if none found
-  if (tasks.length === 0) {
-    tasks.push(
-      {
-        title: 'Project Architecture & Setup',
-        description: 'Design system architecture and set up development environment',
-        category: 'infrastructure',
-        priority: 'high',
-        complexity: 3,
-        effort: '1-2 weeks',
-        dependencies: [],
-        technicalConsiderations: 'Technology stack selection, deployment strategy'
-      },
-      {
-        title: 'Core Domain Logic Implementation',
-        description: 'Implement core business logic and domain models',
-        category: 'backend',
-        priority: 'high',
-        complexity: 6,
-        effort: '2-4 weeks',
-        dependencies: ['Project Architecture & Setup'],
-        technicalConsiderations: 'Data modeling, business rule implementation'
-      },
-      {
-        title: 'User Interface Development',
-        description: 'Create responsive user interface components',
-        category: 'frontend',
-        priority: 'medium',
-        complexity: 5,
-        effort: '2-3 weeks',
-        dependencies: ['Core Domain Logic Implementation'],
-        technicalConsiderations: 'Responsive design, accessibility compliance'
-      },
-      {
-        title: 'Integration & Testing',
-        description: 'System integration and comprehensive testing',
-        category: 'testing',
-        priority: 'high',
-        complexity: 4,
-        effort: '1-2 weeks',
-        dependencies: ['User Interface Development'],
-        technicalConsiderations: 'End-to-end testing, performance validation'
-      }
-    );
-  }
-
-  return tasks;
-}
-
-function organizeTasksIntoEpicsWithAI(tasks: any[]): any[] {
-  const epics: any[] = [];
-  const categoryGroups = tasks.reduce((acc, task) => {
-    if (!acc[task.category]) {
-      acc[task.category] = [];
-    }
-    acc[task.category].push(task);
-    return acc;
-  }, {} as Record<string, any[]>);
-
-  Object.entries(categoryGroups).forEach(([category, categoryTasks]) => {
-    const totalComplexity = categoryTasks.reduce((sum, task) => sum + task.complexity, 0);
-    const highPriorityCount = categoryTasks.filter(t => t.priority === 'high').length;
-    
-    epics.push({
-      title: `${category.charAt(0).toUpperCase() + category.slice(1)} Development`,
-      description: `Comprehensive ${category} implementation covering all related features and functionality`,
-      category,
-      priority: highPriorityCount > categoryTasks.length / 2 ? 'high' : 'medium',
-      totalComplexity,
-      estimatedDuration: estimateEpicDuration(totalComplexity),
-      tasks: categoryTasks
-    });
-  });
-
-  return epics;
-}
-
-function analyzePRDCompletenessWithAI(prdContent: string): any {
-  const requiredSections = [
-    'overview', 'objectives', 'requirements', 'user stories',
-    'acceptance criteria', 'timeline', 'risks', 'dependencies',
-    'success metrics', 'user personas', 'technical architecture'
-  ];
-  
-  const advancedSections = [
-    'competitive analysis', 'market research', 'user journey',
-    'performance requirements', 'security requirements', 'scalability',
-    'accessibility', 'internationalization', 'analytics', 'monitoring'
-  ];
-  
-  const foundRequired = requiredSections.filter(section => 
-    prdContent.toLowerCase().includes(section.replace(' ', ''))
-  );
-  
-  const foundAdvanced = advancedSections.filter(section =>
-    prdContent.toLowerCase().includes(section.replace(' ', ''))
-  );
-  
-  const baseScore = Math.round((foundRequired.length / requiredSections.length) * 70);
-  const advancedScore = Math.round((foundAdvanced.length / advancedSections.length) * 30);
-  const completeness = Math.min(baseScore + advancedScore, 100);
-  
-  return {
-    completeness,
-    strengths: [
-      ...foundRequired.map(section => `${section.charAt(0).toUpperCase() + section.slice(1)} section is comprehensive`),
-      ...foundAdvanced.map(section => `Advanced ${section} considerations included`)
-    ],
-    gaps: [
-      ...requiredSections.filter(section => !foundRequired.includes(section))
-        .map(section => `Missing or incomplete ${section} section`),
-      ...advancedSections.filter(section => !foundAdvanced.includes(section))
-        .map(section => `Could benefit from ${section} analysis`)
-    ],
-    qualityScore: calculatePRDQualityScore(prdContent),
-    recommendations: generateQualityRecommendations(foundRequired, foundAdvanced)
-  };
-}
-
-// AI-enhanced analysis functions
-function generateMarketAnalysisWithAI(prdContent: string, useAI: boolean): string {
-  const baseAnalysis = generateMarketAnalysis(prdContent);
-  
-  if (!useAI) return baseAnalysis;
-  
-  return `## 🎯 **AI-Enhanced Market Analysis**\n\n` +
-    `### Competitive Intelligence\n` +
-    `- **Market Gap Analysis**: Identify underserved market segments and opportunities\n` +
-    `- **Competitive Positioning**: Unique value proposition development\n` +
-    `- **Pricing Strategy**: Market-driven pricing model recommendations\n` +
-    `- **Go-to-Market**: Channel strategy and launch tactics\n\n` +
-    `### Market Validation Framework\n` +
-    `- **Total Addressable Market (TAM)**: Industry size and growth projections\n` +
-    `- **Serviceable Addressable Market (SAM)**: Realistic market segment\n` +
-    `- **Serviceable Obtainable Market (SOM)**: Achievable market share\n` +
-    `- **Market Penetration Strategy**: Phased market entry approach\n\n` +
-    `### User Research & Validation\n` +
-    `- **Customer Discovery**: Interview framework and validation metrics\n` +
-    `- **Persona Refinement**: Data-driven persona development\n` +
-    `- **Journey Mapping**: Comprehensive user experience flows\n` +
-    `- **Pain Point Analysis**: Quantified problem-solution fit\n\n`;
-}
-
-function generateTechnicalAnalysisWithAI(prdContent: string, useAI: boolean): string {
-  const baseAnalysis = generateTechnicalAnalysis(prdContent);
-  
-  if (!useAI) return baseAnalysis;
-  
-  return `## 🔧 **AI-Enhanced Technical Analysis**\n\n` +
-    `### Architecture Decision Framework\n` +
-    `- **Microservices vs Monolith**: Decision matrix based on team size and complexity\n` +
-    `- **Event-Driven Architecture**: Async processing and scalability patterns\n` +
-    `- **API-First Design**: RESTful and GraphQL API strategy\n` +
-    `- **Database Strategy**: SQL vs NoSQL decision framework\n\n` +
-    `### Technology Stack Optimization\n` +
-    `- **Frontend**: React/Vue/Angular evaluation with performance metrics\n` +
-    `- **Backend**: Node.js/Python/Java/.NET comparison matrix\n` +
-    `- **Database**: PostgreSQL/MongoDB/Redis performance analysis\n` +
-    `- **Infrastructure**: AWS/Azure/GCP cost and feature comparison\n\n` +
-    `### Performance & Scalability Engineering\n` +
-    `- **Load Balancing**: Auto-scaling and traffic distribution strategies\n` +
-    `- **Caching Layers**: Multi-tier caching with Redis and CDN\n` +
-    `- **Database Optimization**: Indexing, sharding, and replication\n` +
-    `- **Monitoring**: APM, logging, and observability stack\n\n` +
-    `### Security & Compliance Framework\n` +
-    `- **Authentication**: OAuth 2.0/OIDC implementation\n` +
-    `- **Authorization**: RBAC and fine-grained permissions\n` +
-    `- **Data Protection**: Encryption at rest and in transit\n` +
-    `- **Compliance**: GDPR, SOC 2, and industry standards\n\n`;
-}
-
-function generateRiskAnalysisWithAI(prdContent: string, useAI: boolean): string {
-  const baseAnalysis = generateRiskAnalysis(prdContent);
-  
-  if (!useAI) return baseAnalysis;
-  
-  return `## ⚠️ **AI-Enhanced Risk Analysis**\n\n` +
-    `### Technical Risk Assessment\n` +
-    `- **🔴 Critical**: Performance bottlenecks and scalability limits\n` +
-    `- **🟡 High**: Third-party dependency failures and API changes\n` +
-    `- **🟡 Medium**: Technology stack compatibility and version conflicts\n` +
-    `- **🟢 Low**: Development tool and environment issues\n\n` +
-    `### Business Risk Evaluation\n` +
-    `- **🔴 Critical**: Market timing and competitive threats\n` +
-    `- **🟡 High**: User adoption challenges and retention issues\n` +
-    `- **🟡 Medium**: Pricing strategy effectiveness and revenue impact\n` +
-    `- **🟢 Low**: Brand positioning and marketing execution\n\n` +
-    `### Project Execution Risks\n` +
-    `- **🔴 Critical**: Scope creep and timeline delays\n` +
-    `- **🟡 High**: Team capacity constraints and skill gaps\n` +
-    `- **🟡 Medium**: Stakeholder alignment and communication issues\n` +
-    `- **🟢 Low**: Tool and infrastructure reliability\n\n` +
-    `### Advanced Mitigation Strategies\n` +
-    `- **Risk Monitoring**: Early warning systems and KPI dashboards\n` +
-    `- **Contingency Planning**: Alternative approaches and fallback options\n` +
-    `- **Stakeholder Communication**: Regular risk assessment and reporting\n` +
-    `- **Agile Response**: Rapid adaptation and course correction protocols\n\n`;
-}
-
-function generateEnhancedMetricsWithAI(prdContent: string, useAI: boolean): string {
-  const baseMetrics = generateEnhancedMetrics(prdContent);
-  
-  if (!useAI) return baseMetrics;
-  
-  return `## 📊 **AI-Enhanced Success Metrics Framework**\n\n` +
-    `### Product Performance Indicators\n` +
-    `- **User Engagement**: DAU/MAU ratio, session duration, feature adoption\n` +
-    `- **Retention Metrics**: 1-day, 7-day, 30-day retention cohorts\n` +
-    `- **User Journey**: Conversion funnel analysis and drop-off points\n` +
-    `- **Feature Analytics**: Usage patterns and feature effectiveness\n\n` +
-    `### Business Value Metrics\n` +
-    `- **Revenue**: MRR growth, ARPU, and revenue per feature\n` +
-    `- **Customer Acquisition**: CAC, LTV, and payback period\n` +
-    `- **Customer Satisfaction**: NPS, CSAT, and churn analysis\n` +
-    `- **Market Position**: Market share and competitive benchmarking\n\n` +
-    `### Technical Excellence KPIs\n` +
-    `- **Performance**: 99.9% uptime, <2s response time (p95)\n` +
-    `- **Quality**: <0.1% error rate, >90% test coverage\n` +
-    `- **Security**: Zero critical vulnerabilities, compliance score\n` +
-    `- **Maintainability**: Code quality metrics and technical debt\n\n` +
-    `### Advanced Analytics Framework\n` +
-    `- **Predictive Analytics**: User behavior prediction and churn modeling\n` +
-    `- **A/B Testing**: Feature experimentation and optimization\n` +
-    `- **Real-time Monitoring**: Live dashboards and alert systems\n` +
-    `- **Data-Driven Decisions**: Metrics-based product roadmap\n\n`;
-}
-
-function generateRecommendationsWithAI(analysis: any, enhancementType: string, useAI: boolean): string {
-  let recommendations = `## 💡 **AI-Powered Recommendations**\n\n`;
-  
-  if (useAI) {
-    recommendations += `### 🎯 Immediate Priority Actions\n`;
-    analysis.gaps.slice(0, 3).forEach((gap: string) => {
-      recommendations += `- 🚨 **High Priority**: ${gap}\n`;
-    });
-    
-    recommendations += `\n### 📈 Strategic Enhancement Opportunities\n`;
-    recommendations += `- 📊 **Data-Driven Validation**: Implement user research and market validation\n`;
-    recommendations += `- 🔍 **Competitive Intelligence**: Conduct comprehensive competitor analysis\n`;
-    recommendations += `- 🏗️ **Technical Architecture**: Define scalable system design patterns\n`;
-    recommendations += `- 🧪 **Experimentation Framework**: Plan A/B testing and feature flags\n`;
-    
-    recommendations += `\n### 🚀 Implementation Roadmap\n`;
-    recommendations += `- **Phase 1** (Weeks 1-2): Complete missing PRD sections and stakeholder alignment\n`;
-    recommendations += `- **Phase 2** (Weeks 3-4): Detailed technical planning and architecture review\n`;
-    recommendations += `- **Phase 3** (Weeks 5-6): User research validation and market analysis\n`;
-    recommendations += `- **Phase 4** (Weeks 7-8): Final PRD approval and development kickoff\n`;
-    
-    recommendations += `\n### 🤖 AI-Powered Next Steps\n`;
-    recommendations += `- **Automated Analysis**: Use \`parse_prd\` for actionable task generation\n`;
-    recommendations += `- **Impact Assessment**: Use \`add_feature\` for comprehensive feature analysis\n`;
-    recommendations += `- **Timeline Planning**: Use \`create_roadmap\` for visual project planning\n`;
-    recommendations += `- **Continuous Enhancement**: Regular PRD reviews with AI-powered insights\n\n`;
-  } else {
-    recommendations += `### Immediate Actions\n`;
-    analysis.gaps.forEach((gap: string) => {
-      recommendations += `- 🎯 Address ${gap.toLowerCase()}\n`;
-    });
-    
-    recommendations += `\n### Strategic Improvements\n`;
-    recommendations += `- 📈 Conduct user research to validate assumptions\n`;
-    recommendations += `- 🔍 Perform competitive analysis for positioning\n`;
-    recommendations += `- 🎨 Create detailed wireframes and prototypes\n`;
-    recommendations += `- 🧪 Plan for A/B testing and experimentation\n`;
-    
-    recommendations += `\n### Next Steps\n`;
-    recommendations += `- 📋 Prioritize requirements based on business value\n`;
-    recommendations += `- 👥 Stakeholder review and approval process\n`;
-    recommendations += `- 🗓️ Create detailed project timeline and milestones\n`;
-    recommendations += `- 🚀 Begin technical architecture planning\n\n`;
-  }
-
-  return recommendations;
-}
-
-// Utility functions for AI enhancement
-function categorizeTaskByContent(content: string): string {
-  const lowerContent = content.toLowerCase();
-  
-  if (lowerContent.includes('ui') || lowerContent.includes('interface') || lowerContent.includes('frontend')) {
-    return 'frontend';
-  } else if (lowerContent.includes('api') || lowerContent.includes('backend') || lowerContent.includes('server')) {
-    return 'backend';
-  } else if (lowerContent.includes('database') || lowerContent.includes('db') || lowerContent.includes('data')) {
-    return 'database';
-  } else if (lowerContent.includes('test') || lowerContent.includes('qa') || lowerContent.includes('quality')) {
-    return 'testing';
-  } else if (lowerContent.includes('deploy') || lowerContent.includes('infrastructure') || lowerContent.includes('devops')) {
-    return 'infrastructure';
-  } else if (lowerContent.includes('security') || lowerContent.includes('auth') || lowerContent.includes('permission')) {
-    return 'security';
-  } else {
-    return 'feature';
-  }
-}
-
-function calculatePriorityFromContent(content: string): string {
-  const lowerContent = content.toLowerCase();
-  
-  if (lowerContent.includes('critical') || lowerContent.includes('urgent') || lowerContent.includes('security')) {
-    return 'high';
-  } else if (lowerContent.includes('important') || lowerContent.includes('core') || lowerContent.includes('essential')) {
-    return 'high';
-  } else if (lowerContent.includes('nice') || lowerContent.includes('optional') || lowerContent.includes('enhancement')) {
-    return 'low';
-  } else {
-    return 'medium';
-  }
-}
-
-function calculateComplexityFromContent(content: string): number {
-  let complexity = 2; // Base complexity
-  
-  const lowerContent = content.toLowerCase();
-  
-  // Add complexity for technical keywords
-  const complexKeywords = ['integration', 'algorithm', 'optimization', 'scalability', 'architecture'];
-  complexKeywords.forEach(keyword => {
-    if (lowerContent.includes(keyword)) complexity += 1;
-  });
-  
-  // Add complexity for scope indicators
-  if (lowerContent.includes('comprehensive') || lowerContent.includes('complete')) complexity += 1;
-  if (lowerContent.includes('advanced') || lowerContent.includes('complex')) complexity += 2;
-  if (lowerContent.includes('simple') || lowerContent.includes('basic')) complexity -= 1;
-  
-  return Math.max(1, Math.min(complexity, 8));
-}
-
-function estimateEffortFromComplexity(complexity: number): string {
-  if (complexity <= 2) return '1-3 days';
-  if (complexity <= 4) return '3-7 days';
-  if (complexity <= 6) return '1-2 weeks';
-  return '2-4 weeks';
-}
-
-function extractDependenciesFromContent(taskContent: string, fullPrdContent: string): string[] {
-  const dependencies: string[] = [];
-  
-  // Look for explicit dependency patterns
-  const dependencyPatterns = [
-    /depends? on (.+)/i,
-    /requires? (.+)/i,
-    /needs? (.+)/i,
-    /after (.+)/i
-  ];
-  
-  dependencyPatterns.forEach(pattern => {
-    const match = taskContent.match(pattern);
-    if (match) {
-      dependencies.push(match[1].trim());
-    }
-  });
-  
-  return dependencies;
-}
-
-function extractTechnicalConsiderations(content: string): string {
-  const lowerContent = content.toLowerCase();
-  const considerations: string[] = [];
-  
-  if (lowerContent.includes('performance')) considerations.push('Performance optimization required');
-  if (lowerContent.includes('security')) considerations.push('Security implications to review');
-  if (lowerContent.includes('scalability')) considerations.push('Scalability considerations important');
-  if (lowerContent.includes('integration')) considerations.push('Integration complexity assessment needed');
-  if (lowerContent.includes('api')) considerations.push('API design and documentation required');
-  
-  return considerations.length > 0 ? considerations.join('; ') : 'Standard implementation approach';
-}
-
-function estimateEpicDuration(totalComplexity: number): string {
-  const weeks = Math.ceil(totalComplexity / 3); // Assume 3 story points per week
-  
-  if (weeks <= 2) return '1-2 weeks';
-  if (weeks <= 4) return '2-4 weeks';
-  if (weeks <= 8) return '1-2 months';
-  return '2+ months';
-}
-
-function calculatePRDQualityScore(prdContent: string): number {
-  let score = 0;
-  
-  // Length and detail scoring
-  if (prdContent.length > 1000) score += 20;
-  if (prdContent.length > 3000) score += 10;
-  
-  // Structure scoring
-  const structureElements = ['#', '##', '###', '*', '-', '1.'];
-  structureElements.forEach(element => {
-    if (prdContent.includes(element)) score += 5;
-  });
-  
-  // Quality indicators
-  const qualityKeywords = ['user story', 'acceptance criteria', 'requirement', 'objective', 'metric'];
-  qualityKeywords.forEach(keyword => {
-    if (prdContent.toLowerCase().includes(keyword)) score += 10;
-  });
-  
-  return Math.min(score, 100);
-}
-
-function generateQualityRecommendations(foundRequired: string[], foundAdvanced: string[]): string[] {
-  const recommendations: string[] = [];
-  
-  if (foundRequired.length < 6) {
-    recommendations.push('Add more detailed requirements sections');
-  }
-  
-  if (foundAdvanced.length < 3) {
-    recommendations.push('Include advanced considerations like security and scalability');
-  }
-  
-  recommendations.push('Consider adding user research validation');
-  recommendations.push('Include competitive analysis section');
-  recommendations.push('Add technical architecture details');
-  
-  return recommendations;
-}
+// Helper functions for PRD generation
+function generateFunctionalRequirements(features: string[], complexity: string): string[] {
   const baseRequirements = [
     'User authentication and authorization',
     'Data persistence and retrieval',
@@ -1465,7 +1012,393 @@ function formatPRDAsMarkdown(prd: PRDTemplate): string {
   return markdown;
 }
 
-// Helper functions for parsing PRD
+// AI-enhanced helper functions for advanced analysis
+async function extractTasksFromPRDWithAI(prdContent: string): Promise<any[]> {
+  const tasks: any[] = [];
+  
+  // Enhanced extraction with AI-inspired patterns
+  const patterns = [
+    /(?:feature|functionality|capability|component):\s*(.+)/gi,
+    /(?:implement|build|create|develop)\s+(.+)/gi,
+    /(?:user can|users? should be able to)\s+(.+)/gi,
+    /(?:requirement|must|should|shall):\s*(.+)/gi,
+    /(?:the system|application|platform)\s+(?:must|should|shall)\s+(.+)/gi,
+    /(?:epic|theme|initiative):\s*(.+)/gi
+  ];
+
+  patterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(prdContent)) !== null) {
+      const taskTitle = match[1].trim();
+      if (taskTitle.length > 10 && taskTitle.length < 100) {
+        tasks.push({
+          title: `Implement ${taskTitle}`,
+          description: `Implementation of ${taskTitle} functionality as specified in PRD`,
+          category: categorizeTaskByContent(taskTitle),
+          priority: calculatePriorityFromContent(taskTitle),
+          complexity: calculateComplexityFromContent(taskTitle),
+          effort: estimateEffortFromComplexity(calculateComplexityFromContent(taskTitle)),
+          dependencies: extractDependenciesFromContent(taskTitle, prdContent),
+          technicalConsiderations: extractTechnicalConsiderations(taskTitle)
+        });
+      }
+    }
+  });
+
+  // Add structured default tasks if none found
+  if (tasks.length === 0) {
+    tasks.push(
+      {
+        title: 'Project Architecture & Setup',
+        description: 'Design system architecture and set up development environment',
+        category: 'infrastructure',
+        priority: 'high',
+        complexity: 3,
+        effort: '1-2 weeks',
+        dependencies: [],
+        technicalConsiderations: 'Technology stack selection, deployment strategy'
+      },
+      {
+        title: 'Core Domain Logic Implementation',
+        description: 'Implement core business logic and domain models',
+        category: 'backend',
+        priority: 'high',
+        complexity: 6,
+        effort: '2-4 weeks',
+        dependencies: ['Project Architecture & Setup'],
+        technicalConsiderations: 'Data modeling, business rule implementation'
+      },
+      {
+        title: 'User Interface Development',
+        description: 'Create responsive user interface components',
+        category: 'frontend',
+        priority: 'medium',
+        complexity: 5,
+        effort: '2-3 weeks',
+        dependencies: ['Core Domain Logic Implementation'],
+        technicalConsiderations: 'Responsive design, accessibility compliance'
+      },
+      {
+        title: 'Integration & Testing',
+        description: 'System integration and comprehensive testing',
+        category: 'testing',
+        priority: 'high',
+        complexity: 4,
+        effort: '1-2 weeks',
+        dependencies: ['User Interface Development'],
+        technicalConsiderations: 'End-to-end testing, performance validation'
+      }
+    );
+  }
+
+  return tasks;
+}
+
+function organizeTasksIntoEpicsWithAI(tasks: any[]): any[] {
+  const epics: any[] = [];
+  const categoryGroups = tasks.reduce((acc, task) => {
+    if (!acc[task.category]) {
+      acc[task.category] = [];
+    }
+    acc[task.category].push(task);
+    return acc;
+  }, {} as Record<string, any[]>);
+
+  Object.entries(categoryGroups).forEach(([category, categoryTasks]) => {
+    const totalComplexity = categoryTasks.reduce((sum, task) => sum + task.complexity, 0);
+    const highPriorityCount = categoryTasks.filter(t => t.priority === 'high').length;
+    
+    epics.push({
+      title: `${category.charAt(0).toUpperCase() + category.slice(1)} Development`,
+      description: `Comprehensive ${category} implementation covering all related features and functionality`,
+      category,
+      priority: highPriorityCount > categoryTasks.length / 2 ? 'high' : 'medium',
+      totalComplexity,
+      estimatedDuration: estimateEpicDuration(totalComplexity),
+      tasks: categoryTasks
+    });
+  });
+
+  return epics;
+}
+
+function analyzePRDCompletenessWithAI(prdContent: string): any {
+  const requiredSections = [
+    'overview', 'objectives', 'requirements', 'user stories',
+    'acceptance criteria', 'timeline', 'risks', 'dependencies',
+    'success metrics', 'user personas', 'technical architecture'
+  ];
+  
+  const advancedSections = [
+    'competitive analysis', 'market research', 'user journey',
+    'performance requirements', 'security requirements', 'scalability',
+    'accessibility', 'internationalization', 'analytics', 'monitoring'
+  ];
+  
+  const foundRequired = requiredSections.filter(section => 
+    prdContent.toLowerCase().includes(section.replace(' ', ''))
+  );
+  
+  const foundAdvanced = advancedSections.filter(section =>
+    prdContent.toLowerCase().includes(section.replace(' ', ''))
+  );
+  
+  const baseScore = Math.round((foundRequired.length / requiredSections.length) * 70);
+  const advancedScore = Math.round((foundAdvanced.length / advancedSections.length) * 30);
+  const completeness = Math.min(baseScore + advancedScore, 100);
+  
+  return {
+    completeness,
+    strengths: [
+      ...foundRequired.map(section => `${section.charAt(0).toUpperCase() + section.slice(1)} section is comprehensive`),
+      ...foundAdvanced.map(section => `Advanced ${section} considerations included`)
+    ],
+    gaps: [
+      ...requiredSections.filter(section => !foundRequired.includes(section))
+        .map(section => `Missing or incomplete ${section} section`),
+      ...advancedSections.filter(section => !foundAdvanced.includes(section))
+        .map(section => `Could benefit from ${section} analysis`)
+    ],
+    qualityScore: calculatePRDQualityScore(prdContent),
+    recommendations: generateQualityRecommendations(foundRequired, foundAdvanced)
+  };
+}
+
+// Additional AI-enhanced analysis functions (simplified for space)
+function generateMarketAnalysisWithAI(prdContent: string, useAI: boolean): string {
+  const baseAnalysis = `## 🎯 **Market Analysis**\n\n` +
+    `### Competitive Landscape\n` +
+    `- Research existing solutions in the market\n` +
+    `- Identify key differentiators and competitive advantages\n` +
+    `- Analyze pricing strategies and business models\n\n`;
+  
+  if (!useAI) return baseAnalysis;
+  
+  return `## 🎯 **AI-Enhanced Market Analysis**\n\n` +
+    `### Competitive Intelligence\n` +
+    `- **Market Gap Analysis**: Identify underserved market segments and opportunities\n` +
+    `- **Competitive Positioning**: Unique value proposition development\n` +
+    `- **Pricing Strategy**: Market-driven pricing model recommendations\n` +
+    `- **Go-to-Market**: Channel strategy and launch tactics\n\n`;
+}
+
+function generateTechnicalAnalysisWithAI(prdContent: string, useAI: boolean): string {
+  const baseAnalysis = `## 🔧 **Technical Analysis**\n\n` +
+    `### Architecture Recommendations\n` +
+    `- Evaluate microservices vs monolithic architecture\n` +
+    `- Consider event-driven architecture for scalability\n` +
+    `- Plan for API-first design approach\n\n`;
+  
+  if (!useAI) return baseAnalysis;
+  
+  return `## 🔧 **AI-Enhanced Technical Analysis**\n\n` +
+    `### Architecture Decision Framework\n` +
+    `- **Microservices vs Monolith**: Decision matrix based on team size and complexity\n` +
+    `- **Event-Driven Architecture**: Async processing and scalability patterns\n` +
+    `- **API-First Design**: RESTful and GraphQL API strategy\n\n`;
+}
+
+function generateRiskAnalysisWithAI(prdContent: string, useAI: boolean): string {
+  const baseAnalysis = `## ⚠️ **Risk Analysis**\n\n` +
+    `### Technical Risks\n` +
+    `- **High:** Performance bottlenecks under load\n` +
+    `- **Medium:** Third-party service dependencies\n` +
+    `- **Low:** Technology stack compatibility\n\n`;
+  
+  if (!useAI) return baseAnalysis;
+  
+  return `## ⚠️ **AI-Enhanced Risk Analysis**\n\n` +
+    `### Technical Risk Assessment\n` +
+    `- **🔴 Critical**: Performance bottlenecks and scalability limits\n` +
+    `- **🟡 High**: Third-party dependency failures and API changes\n` +
+    `- **🟢 Low**: Development tool and environment issues\n\n`;
+}
+
+function generateEnhancedMetricsWithAI(prdContent: string, useAI: boolean): string {
+  const baseMetrics = `## 📊 **Enhanced Success Metrics**\n\n` +
+    `### Product Metrics\n` +
+    `- Monthly Active Users (MAU) growth\n` +
+    `- User retention rates (1-day, 7-day, 30-day)\n` +
+    `- Feature adoption and usage analytics\n\n`;
+  
+  if (!useAI) return baseMetrics;
+  
+  return `## 📊 **AI-Enhanced Success Metrics Framework**\n\n` +
+    `### Product Performance Indicators\n` +
+    `- **User Engagement**: DAU/MAU ratio, session duration, feature adoption\n` +
+    `- **Retention Metrics**: 1-day, 7-day, 30-day retention cohorts\n` +
+    `- **Feature Analytics**: Usage patterns and feature effectiveness\n\n`;
+}
+
+function generateRecommendationsWithAI(analysis: any, enhancementType: string, useAI: boolean): string {
+  let recommendations = `## 💡 **${useAI ? 'AI-Powered ' : ''}Recommendations**\n\n`;
+  
+  if (useAI) {
+    recommendations += `### 🎯 Immediate Priority Actions\n`;
+    analysis.gaps.slice(0, 3).forEach((gap: string) => {
+      recommendations += `- 🚨 **High Priority**: ${gap}\n`;
+    });
+    
+    recommendations += `\n### 📈 Strategic Enhancement Opportunities\n`;
+    recommendations += `- 📊 **Data-Driven Validation**: Implement user research and market validation\n`;
+    recommendations += `- 🔍 **Competitive Intelligence**: Conduct comprehensive competitor analysis\n`;
+    recommendations += `- 🏗️ **Technical Architecture**: Define scalable system design patterns\n\n`;
+  } else {
+    recommendations += `### Immediate Actions\n`;
+    analysis.gaps.forEach((gap: string) => {
+      recommendations += `- 🎯 Address ${gap.toLowerCase()}\n`;
+    });
+    recommendations += `\n`;
+  }
+
+  return recommendations;
+}
+
+// Utility functions for AI-enhanced task analysis
+function categorizeTaskByContent(content: string): string {
+  const lowerContent = content.toLowerCase();
+  
+  if (lowerContent.includes('ui') || lowerContent.includes('interface') || lowerContent.includes('frontend')) {
+    return 'frontend';
+  } else if (lowerContent.includes('api') || lowerContent.includes('backend') || lowerContent.includes('server')) {
+    return 'backend';
+  } else if (lowerContent.includes('database') || lowerContent.includes('db') || lowerContent.includes('data')) {
+    return 'database';
+  } else if (lowerContent.includes('test') || lowerContent.includes('qa') || lowerContent.includes('quality')) {
+    return 'testing';
+  } else if (lowerContent.includes('deploy') || lowerContent.includes('infrastructure') || lowerContent.includes('devops')) {
+    return 'infrastructure';
+  } else if (lowerContent.includes('security') || lowerContent.includes('auth') || lowerContent.includes('permission')) {
+    return 'security';
+  } else {
+    return 'feature';
+  }
+}
+
+function calculatePriorityFromContent(content: string): string {
+  const lowerContent = content.toLowerCase();
+  
+  if (lowerContent.includes('critical') || lowerContent.includes('urgent') || lowerContent.includes('security')) {
+    return 'high';
+  } else if (lowerContent.includes('important') || lowerContent.includes('core') || lowerContent.includes('essential')) {
+    return 'high';
+  } else if (lowerContent.includes('nice') || lowerContent.includes('optional') || lowerContent.includes('enhancement')) {
+    return 'low';
+  } else {
+    return 'medium';
+  }
+}
+
+function calculateComplexityFromContent(content: string): number {
+  let complexity = 2; // Base complexity
+  
+  const lowerContent = content.toLowerCase();
+  
+  // Add complexity for technical keywords
+  const complexKeywords = ['integration', 'algorithm', 'optimization', 'scalability', 'architecture'];
+  complexKeywords.forEach(keyword => {
+    if (lowerContent.includes(keyword)) complexity += 1;
+  });
+  
+  // Add complexity for scope indicators
+  if (lowerContent.includes('comprehensive') || lowerContent.includes('complete')) complexity += 1;
+  if (lowerContent.includes('advanced') || lowerContent.includes('complex')) complexity += 2;
+  if (lowerContent.includes('simple') || lowerContent.includes('basic')) complexity -= 1;
+  
+  return Math.max(1, Math.min(complexity, 8));
+}
+
+function estimateEffortFromComplexity(complexity: number): string {
+  if (complexity <= 2) return '1-3 days';
+  if (complexity <= 4) return '3-7 days';
+  if (complexity <= 6) return '1-2 weeks';
+  return '2-4 weeks';
+}
+
+function extractDependenciesFromContent(taskContent: string, fullPrdContent: string): string[] {
+  const dependencies: string[] = [];
+  
+  // Look for explicit dependency patterns
+  const dependencyPatterns = [
+    /depends? on (.+)/i,
+    /requires? (.+)/i,
+    /needs? (.+)/i,
+    /after (.+)/i
+  ];
+  
+  dependencyPatterns.forEach(pattern => {
+    const match = taskContent.match(pattern);
+    if (match) {
+      dependencies.push(match[1].trim());
+    }
+  });
+  
+  return dependencies;
+}
+
+function extractTechnicalConsiderations(content: string): string {
+  const lowerContent = content.toLowerCase();
+  const considerations: string[] = [];
+  
+  if (lowerContent.includes('performance')) considerations.push('Performance optimization required');
+  if (lowerContent.includes('security')) considerations.push('Security implications to review');
+  if (lowerContent.includes('scalability')) considerations.push('Scalability considerations important');
+  if (lowerContent.includes('integration')) considerations.push('Integration complexity assessment needed');
+  if (lowerContent.includes('api')) considerations.push('API design and documentation required');
+  
+  return considerations.length > 0 ? considerations.join('; ') : 'Standard implementation approach';
+}
+
+function estimateEpicDuration(totalComplexity: number): string {
+  const weeks = Math.ceil(totalComplexity / 3); // Assume 3 story points per week
+  
+  if (weeks <= 2) return '1-2 weeks';
+  if (weeks <= 4) return '2-4 weeks';
+  if (weeks <= 8) return '1-2 months';
+  return '2+ months';
+}
+
+function calculatePRDQualityScore(prdContent: string): number {
+  let score = 0;
+  
+  // Length and detail scoring
+  if (prdContent.length > 1000) score += 20;
+  if (prdContent.length > 3000) score += 10;
+  
+  // Structure scoring
+  const structureElements = ['#', '##', '###', '*', '-', '1.'];
+  structureElements.forEach(element => {
+    if (prdContent.includes(element)) score += 5;
+  });
+  
+  // Quality indicators
+  const qualityKeywords = ['user story', 'acceptance criteria', 'requirement', 'objective', 'metric'];
+  qualityKeywords.forEach(keyword => {
+    if (prdContent.toLowerCase().includes(keyword)) score += 10;
+  });
+  
+  return Math.min(score, 100);
+}
+
+function generateQualityRecommendations(foundRequired: string[], foundAdvanced: string[]): string[] {
+  const recommendations: string[] = [];
+  
+  if (foundRequired.length < 6) {
+    recommendations.push('Add more detailed requirements sections');
+  }
+  
+  if (foundAdvanced.length < 3) {
+    recommendations.push('Include advanced considerations like security and scalability');
+  }
+  
+  recommendations.push('Consider adding user research validation');
+  recommendations.push('Include competitive analysis section');
+  recommendations.push('Add technical architecture details');
+  
+  return recommendations;
+}
+
+// Helper functions for parsing PRD (fallback methods)
 async function extractTasksFromPRD(prdContent: string): Promise<any[]> {
   const tasks: any[] = [];
   
@@ -1589,7 +1522,7 @@ function formatTaskDescription(task: any, epicNumber: number): string {
   return description;
 }
 
-// Helper functions for enhancing PRD
+// Helper functions for enhancing PRD (fallback methods)
 function analyzePRDCompleteness(prdContent: string): any {
   const requiredSections = [
     'overview', 'objectives', 'requirements', 'user stories',
@@ -1608,108 +1541,6 @@ function analyzePRDCompleteness(prdContent: string): any {
     gaps: requiredSections.filter(section => !foundSections.includes(section))
       .map(section => `Missing ${section} section`)
   };
-}
-
-function generateMarketAnalysis(prdContent: string): string {
-  return `## 🎯 **Market Analysis**\n\n` +
-    `### Competitive Landscape\n` +
-    `- Research existing solutions in the market\n` +
-    `- Identify key differentiators and competitive advantages\n` +
-    `- Analyze pricing strategies and business models\n\n` +
-    `### Target Market Size\n` +
-    `- Define total addressable market (TAM)\n` +
-    `- Identify serviceable addressable market (SAM)\n` +
-    `- Estimate serviceable obtainable market (SOM)\n\n` +
-    `### User Research Insights\n` +
-    `- Conduct user interviews and surveys\n` +
-    `- Create detailed user personas\n` +
-    `- Map user journey and pain points\n\n`;
-}
-
-function generateTechnicalAnalysis(prdContent: string): string {
-  return `## 🔧 **Technical Analysis**\n\n` +
-    `### Architecture Recommendations\n` +
-    `- Evaluate microservices vs monolithic architecture\n` +
-    `- Consider event-driven architecture for scalability\n` +
-    `- Plan for API-first design approach\n\n` +
-    `### Technology Stack Evaluation\n` +
-    `- Frontend: React/Vue/Angular comparison\n` +
-    `- Backend: Node.js/Python/Java/.NET analysis\n` +
-    `- Database: SQL vs NoSQL requirements\n` +
-    `- Cloud platform: AWS/Azure/GCP evaluation\n\n` +
-    `### Scalability Considerations\n` +
-    `- Load balancing and auto-scaling strategies\n` +
-    `- Caching layers (CDN, Redis, in-memory)\n` +
-    `- Database sharding and replication\n` +
-    `- Message queues for async processing\n\n`;
-}
-
-function generateRiskAnalysis(prdContent: string): string {
-  return `## ⚠️ **Risk Analysis**\n\n` +
-    `### Technical Risks\n` +
-    `- **High:** Performance bottlenecks under load\n` +
-    `- **Medium:** Third-party service dependencies\n` +
-    `- **Low:** Technology stack compatibility\n\n` +
-    `### Business Risks\n` +
-    `- **High:** Market timing and competition\n` +
-    `- **Medium:** User adoption challenges\n` +
-    `- **Low:** Pricing strategy effectiveness\n\n` +
-    `### Project Risks\n` +
-    `- **High:** Scope creep and timeline delays\n` +
-    `- **Medium:** Team capacity and skill gaps\n` +
-    `- **Low:** Tool and infrastructure issues\n\n` +
-    `### Mitigation Strategies\n` +
-    `- Implement phased rollout approach\n` +
-    `- Create comprehensive testing strategy\n` +
-    `- Establish clear communication protocols\n` +
-    `- Plan for contingency scenarios\n\n`;
-}
-
-function generateEnhancedMetrics(prdContent: string): string {
-  return `## 📊 **Enhanced Success Metrics**\n\n` +
-    `### Product Metrics\n` +
-    `- Monthly Active Users (MAU) growth\n` +
-    `- Daily Active Users (DAU) engagement\n` +
-    `- User retention rates (1-day, 7-day, 30-day)\n` +
-    `- Feature adoption and usage analytics\n\n` +
-    `### Business Metrics\n` +
-    `- Customer Acquisition Cost (CAC)\n` +
-    `- Customer Lifetime Value (CLV)\n` +
-    `- Monthly Recurring Revenue (MRR) growth\n` +
-    `- Net Promoter Score (NPS)\n\n` +
-    `### Technical Metrics\n` +
-    `- System uptime and availability (99.9% SLA)\n` +
-    `- Response time (p95 < 2 seconds)\n` +
-    `- Error rate (< 0.1% of requests)\n` +
-    `- Code coverage (> 80%)\n\n` +
-    `### Quality Metrics\n` +
-    `- Customer satisfaction scores\n` +
-    `- Support ticket volume and resolution time\n` +
-    `- Bug report frequency and severity\n` +
-    `- User feedback and feature requests\n\n`;
-}
-
-function generateRecommendations(analysis: any, enhancementType: string): string {
-  let recommendations = `## 💡 **Recommendations**\n\n`;
-  
-  recommendations += `### Immediate Actions\n`;
-  analysis.gaps.forEach((gap: string) => {
-    recommendations += `- 🎯 Address ${gap.toLowerCase()}\n`;
-  });
-  
-  recommendations += `\n### Strategic Improvements\n`;
-  recommendations += `- 📈 Conduct user research to validate assumptions\n`;
-  recommendations += `- 🔍 Perform competitive analysis for positioning\n`;
-  recommendations += `- 🎨 Create detailed wireframes and prototypes\n`;
-  recommendations += `- 🧪 Plan for A/B testing and experimentation\n`;
-  
-  recommendations += `\n### Next Steps\n`;
-  recommendations += `- 📋 Prioritize requirements based on business value\n`;
-  recommendations += `- 👥 Stakeholder review and approval process\n`;
-  recommendations += `- 🗓️ Create detailed project timeline and milestones\n`;
-  recommendations += `- 🚀 Begin technical architecture planning\n\n`;
-
-  return recommendations;
 }
 
 // Helper functions for feature impact analysis
@@ -1993,57 +1824,1241 @@ function formatFeatureEpic(name: string, description: string, impact: FeatureImp
   return epic;
 }
 
-// Helper function for roadmap generation
-function generateRoadmapMarkdown(roadmapData: any, includeDependencies: boolean, focusAreas: string[]): string {
-  let markdown = `# 🗺️ ${roadmapData.title}\n\n`;
-  
-  markdown += `**Generated:** ${new Date(roadmapData.generatedAt).toLocaleDateString()}\n`;
-  markdown += `**Repository:** ${roadmapData.repository}\n`;
-  markdown += `**Time Horizon:** ${roadmapData.timeHorizon}\n\n`;
-  
-  markdown += `## 📊 Project Overview\n\n`;
-  markdown += `- **Total Milestones:** ${roadmapData.summary.totalMilestones}\n`;
-  markdown += `- **Open Milestones:** ${roadmapData.summary.openMilestones}\n`;
-  markdown += `- **Total Issues:** ${roadmapData.summary.totalIssues}\n`;
-  markdown += `- **Open Issues:** ${roadmapData.summary.openIssues}\n\n`;
-  
-  markdown += `## 🎯 Milestones\n\n`;
-  roadmapData.milestones.forEach((milestone: any) => {
-    const progress = milestone.open_issues + milestone.closed_issues > 0 
-      ? Math.round((milestone.closed_issues / (milestone.open_issues + milestone.closed_issues)) * 100) 
-      : 0;
+/**
+ * Create comprehensive requirements traceability matrix
+ */
+export async function createTraceabilityMatrix(config: GitHubConfig, args: any): Promise<ToolResponse> {
+  try {
+    validateRepoConfig(config);
+
+    const {
+      title,
+      source_types = ['issues', 'prd', 'milestones', 'pull_requests', 'labels'],
+      traceability_direction = 'bidirectional',
+      include_coverage_analysis = true,
+      include_impact_analysis = true,
+      include_dependency_graph = true,
+      filter_labels = [],
+      filter_milestones = [],
+      filter_status = 'all',
+      output_format = 'markdown',
+      export_path,
+      create_issue = false,
+      compliance_level = 'standard'
+    } = args;
+
+    let result = '';
+
+    if (output_format === 'markdown') {
+      result = `# 🔗 **${title}**\n\n`;
+      result += `**Generated:** ${new Date().toLocaleDateString()}\n`;
+      result += `**Repository:** ${config.owner}/${config.repo}\n`;
+      result += `**Traceability Direction:** ${traceability_direction}\n`;
+      result += `**Compliance Level:** ${compliance_level}\n`;
+      result += `**Source Types:** ${source_types.join(', ')}\n\n`;
+      result += `---\n\n`;
+    }
+
+    // Fetch all relevant data from GitHub
+    const [
+      issuesResponse,
+      milestonesResponse, 
+      labelsResponse,
+      pullRequestsResponse
+    ] = await Promise.all([
+      config.octokit.rest.issues.listForRepo({
+        owner: config.owner,
+        repo: config.repo,
+        state: filter_status,
+        per_page: 100
+      }),
+      config.octokit.rest.issues.listMilestones({
+        owner: config.owner,
+        repo: config.repo,
+        state: 'all',
+        per_page: 100
+      }),
+      config.octokit.rest.issues.listLabelsForRepo({
+        owner: config.owner,
+        repo: config.repo,
+        per_page: 100
+      }),
+      config.octokit.rest.pulls.list({
+        owner: config.owner,
+        repo: config.repo,
+        state: 'all',
+        per_page: 100
+      })
+    ]);
+
+    // Filter and process the data
+    let issues = issuesResponse.data.filter(issue => !issue.pull_request);
+    let milestones = milestonesResponse.data;
+    let labels = labelsResponse.data;
+    let pullRequests = pullRequestsResponse.data;
+
+    // Apply filters
+    if (filter_labels.length > 0) {
+      issues = issues.filter(issue => 
+        issue.labels.some(label => filter_labels.includes(label.name))
+      );
+    }
+
+    if (filter_milestones.length > 0) {
+      const milestoneNumbers = milestones
+        .filter(m => filter_milestones.includes(m.title))
+        .map(m => m.number);
+      issues = issues.filter(issue => 
+        issue.milestone && milestoneNumbers.includes(issue.milestone.number)
+      );
+    }
+
+    // Extract requirements from different sources
+    const requirements = await extractRequirementsFromSources(
+      { issues, milestones, labels, pullRequests },
+      source_types
+    );
+
+    // Create traceability mappings
+    const traceabilityData = await createTraceabilityMappings(
+      requirements,
+      { issues, milestones, pullRequests },
+      traceability_direction
+    );
+
+    // Generate coverage and gap analysis
+    let coverageAnalysis = null;
+    if (include_coverage_analysis) {
+      coverageAnalysis = generateCoverageAnalysis(requirements, traceabilityData);
+    }
+
+    // Generate impact analysis
+    let impactAnalysis = null;
+    if (include_impact_analysis) {
+      impactAnalysis = generateImpactAnalysis(traceabilityData, { issues, pullRequests });
+    }
+
+    // Generate dependency graph
+    let dependencyGraph = null;
+    if (include_dependency_graph) {
+      dependencyGraph = generateDependencyGraph(traceabilityData);
+    }
+
+    // Create the complete traceability matrix
+    const matrixData = {
+      title,
+      metadata: {
+        generatedAt: new Date().toISOString(),
+        repository: `${config.owner}/${config.repo}`,
+        traceabilityDirection: traceability_direction,
+        complianceLevel: compliance_level,
+        sourceTypes: source_types,
+        filters: {
+          labels: filter_labels,
+          milestones: filter_milestones,
+          status: filter_status
+        }
+      },
+      summary: {
+        totalRequirements: requirements.length,
+        totalIssues: issues.length,
+        totalMilestones: milestones.length,
+        totalPullRequests: pullRequests.length,
+        mappedRequirements: traceabilityData.mappings.length,
+        coveragePercentage: coverageAnalysis ? coverageAnalysis.coveragePercentage : 0
+      },
+      requirements,
+      traceabilityMappings: traceabilityData.mappings,
+      relationships: traceabilityData.relationships,
+      coverageAnalysis,
+      impactAnalysis,
+      dependencyGraph
+    };
+
+    // Format output based on requested format
+    if (output_format === 'json') {
+      result = JSON.stringify(matrixData, null, 2);
+    } else if (output_format === 'csv') {
+      result = generateCSVMatrix(matrixData);
+    } else if (output_format === 'html') {
+      result = generateHTMLMatrix(matrixData);
+    } else {
+      result = await generateMarkdownMatrix(matrixData, compliance_level);
+    }
+
+    // Create GitHub issue with traceability matrix if requested
+    if (create_issue) {
+      const issueBody = output_format === 'markdown' ? result : `\`\`\`${output_format}\n${result}\n\`\`\``;
+      
+      const issueResponse = await config.octokit.rest.issues.create({
+        owner: config.owner,
+        repo: config.repo,
+        title: `🔗 Traceability Matrix: ${title}`,
+        body: issueBody,
+        labels: [
+          'traceability',
+          'compliance',
+          'documentation',
+          `level:${compliance_level}`,
+          'auto-generated'
+        ]
+      });
+
+      result += `\n\n✅ **Traceability Matrix Issue Created!**\n`;
+      result += `The matrix has been saved as GitHub issue [#${issueResponse.data.number}](${issueResponse.data.html_url})\n`;
+      result += `**Labels**: traceability, compliance, documentation, level:${compliance_level}, auto-generated`;
+    }
+
+    // Add export information if path provided
+    if (export_path) {
+      result += `\n\n📄 **Export Information**\n`;
+      result += `**Suggested Export Path**: ${export_path}\n`;
+      result += `**Format**: ${output_format}\n`;
+      result += `**Size**: ${Math.round(result.length / 1024)} KB\n`;
+      result += `**Compliance Ready**: ${compliance_level === 'enterprise' ? 'Yes' : 'Partial'}`;
+    }
+
+    return createSuccessResponse(result);
+  } catch (error) {
+    return handleToolError(error, 'create_traceability_matrix');
+  }
+}
+
+// Helper functions for traceability matrix generation
+async function extractRequirementsFromSources(
+  data: { issues: any[], milestones: any[], labels: any[], pullRequests: any[] },
+  sourceTypes: string[]
+): Promise<any[]> {
+  const requirements: any[] = [];
+
+  // Extract from issues
+  if (sourceTypes.includes('issues')) {
+    data.issues.forEach(issue => {
+      const requirement = {
+        id: `REQ-ISSUE-${issue.number}`,
+        type: 'issue',
+        source: 'GitHub Issues',
+        title: issue.title,
+        description: issue.body || '',
+        priority: extractPriorityFromIssue(issue),
+        status: issue.state,
+        labels: issue.labels.map((l: any) => l.name),
+        assignees: issue.assignees?.map((a: any) => a.login) || [],
+        milestone: issue.milestone?.title || null,
+        createdAt: issue.created_at,
+        updatedAt: issue.updated_at,
+        url: issue.html_url,
+        number: issue.number,
+        category: categorizeRequirement(issue.title, issue.body, issue.labels),
+        acceptanceCriteria: extractAcceptanceCriteria(issue.body),
+        dependencies: extractIssueDependencies(issue.body),
+        linkedPRs: [],
+        testCases: extractTestReferences(issue.body),
+        businessValue: calculateIssueBusinessValue(issue),
+        technicalComplexity: calculateTechnicalComplexity(issue),
+        traceabilityLevel: 'detailed'
+      };
+      requirements.push(requirement);
+    });
+  }
+
+  // Extract from milestones as high-level requirements
+  if (sourceTypes.includes('milestones')) {
+    data.milestones.forEach(milestone => {
+      const requirement = {
+        id: `REQ-MILESTONE-${milestone.number}`,
+        type: 'milestone',
+        source: 'GitHub Milestones',
+        title: milestone.title,
+        description: milestone.description || '',
+        priority: 'high', // Milestones are typically high-level priorities
+        status: milestone.state,
+        labels: [],
+        assignees: [],
+        milestone: null,
+        createdAt: milestone.created_at,
+        updatedAt: milestone.updated_at,
+        dueDate: milestone.due_on,
+        url: milestone.html_url,
+        number: milestone.number,
+        category: 'strategic',
+        progress: {
+          totalIssues: milestone.open_issues + milestone.closed_issues,
+          completedIssues: milestone.closed_issues,
+          percentage: milestone.open_issues + milestone.closed_issues > 0 
+            ? Math.round((milestone.closed_issues / (milestone.open_issues + milestone.closed_issues)) * 100)
+            : 0
+        },
+        linkedIssues: [], // Will be populated in mappings
+        businessValue: 'high',
+        technicalComplexity: 'variable',
+        traceabilityLevel: 'strategic'
+      };
+      requirements.push(requirement);
+    });
+  }
+
+  // Extract from labels as requirement categories
+  if (sourceTypes.includes('labels')) {
+    const labelCategories = ['requirement', 'epic', 'feature', 'user-story', 'acceptance-criteria'];
     
-    markdown += `### ${milestone.title}\n`;
-    markdown += `- **Progress:** ${progress}% (${milestone.closed_issues}/${milestone.open_issues + milestone.closed_issues} issues)\n`;
-    markdown += `- **Due Date:** ${milestone.due_on ? new Date(milestone.due_on).toLocaleDateString() : 'Not set'}\n`;
-    markdown += `- **Status:** ${milestone.state}\n`;
-    if (milestone.description) {
-      markdown += `- **Description:** ${milestone.description}\n`;
+    data.labels
+      .filter(label => labelCategories.some(cat => label.name.toLowerCase().includes(cat)))
+      .forEach(label => {
+        const requirement = {
+          id: `REQ-LABEL-${label.name.replace(/\s+/g, '-')}`,
+          type: 'label-category',
+          source: 'GitHub Labels',
+          title: `${label.name} Category`,
+          description: label.description || `All requirements tagged with ${label.name}`,
+          priority: 'medium',
+          status: 'active',
+          labels: [label.name],
+          assignees: [],
+          milestone: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          url: `https://github.com/${data.issues[0]?.repository_url?.split('/').slice(-2).join('/')}/labels/${encodeURIComponent(label.name)}`,
+          category: 'organizational',
+          color: `#${label.color}`,
+          linkedIssues: [], // Will be populated with issues that have this label
+          businessValue: 'organizational',
+          technicalComplexity: 'none',
+          traceabilityLevel: 'categorical'
+        };
+        requirements.push(requirement);
+      });
+  }
+
+  // Extract from pull requests as implementation artifacts
+  if (sourceTypes.includes('pull_requests')) {
+    data.pullRequests.forEach(pr => {
+      const requirement = {
+        id: `REQ-PR-${pr.number}`,
+        type: 'implementation',
+        source: 'GitHub Pull Requests',
+        title: `Implementation: ${pr.title}`,
+        description: pr.body || '',
+        priority: 'medium',
+        status: pr.state,
+        labels: pr.labels?.map((l: any) => l.name) || [],
+        assignees: [pr.user?.login].filter(Boolean),
+        milestone: null,
+        createdAt: pr.created_at,
+        updatedAt: pr.updated_at,
+        mergedAt: pr.merged_at,
+        url: pr.html_url,
+        number: pr.number,
+        category: 'implementation',
+        changedFiles: pr.changed_files || 0,
+        additions: pr.additions || 0,
+        deletions: pr.deletions || 0,
+        linkedIssues: extractLinkedIssuesFromPR(pr.body),
+        commits: pr.commits || 0,
+        reviewStatus: pr.state === 'merged' ? 'approved' : 'pending',
+        businessValue: 'implementation',
+        technicalComplexity: calculatePRComplexity(pr),
+        traceabilityLevel: 'implementation'
+      };
+      requirements.push(requirement);
+    });
+  }
+
+  return requirements.sort((a, b) => {
+    // Sort by priority (high > medium > low) then by creation date
+    const priorityOrder = { 'high': 3, 'medium': 2, 'low': 1 };
+    const aPriority = priorityOrder[a.priority as keyof typeof priorityOrder] || 1;
+    const bPriority = priorityOrder[b.priority as keyof typeof priorityOrder] || 1;
+    
+    if (aPriority !== bPriority) {
+      return bPriority - aPriority;
+    }
+    
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+}
+
+async function createTraceabilityMappings(
+  requirements: any[],
+  data: { issues: any[], milestones: any[], pullRequests: any[] },
+  direction: string
+): Promise<{ mappings: any[], relationships: any[] }> {
+  const mappings: any[] = [];
+  const relationships: any[] = [];
+
+  // Create forward traceability: Requirements → Implementation → Testing
+  if (direction === 'forward' || direction === 'bidirectional') {
+    requirements.forEach(requirement => {
+      if (requirement.type === 'issue') {
+        // Map issue to milestone
+        if (requirement.milestone) {
+          const milestoneReq = requirements.find(r => 
+            r.type === 'milestone' && r.title === requirement.milestone
+          );
+          if (milestoneReq) {
+            mappings.push({
+              id: `MAP-${requirement.id}-${milestoneReq.id}`,
+              from: requirement.id,
+              to: milestoneReq.id,
+              type: 'implements',
+              direction: 'forward',
+              strength: 'strong',
+              description: `Issue ${requirement.number} contributes to milestone ${milestoneReq.title}`
+            });
+            
+            relationships.push({
+              source: requirement.id,
+              target: milestoneReq.id,
+              type: 'contributes_to',
+              weight: 1
+            });
+          }
+        }
+
+        // Map issue to pull requests
+        const linkedPRs = data.pullRequests.filter(pr => 
+          pr.body?.includes(`#${requirement.number}`) || 
+          pr.title.includes(`#${requirement.number}`) ||
+          requirement.dependencies.some((dep: string) => pr.body?.includes(dep))
+        );
+        
+        linkedPRs.forEach(pr => {
+          const prReq = requirements.find(r => 
+            r.type === 'implementation' && r.number === pr.number
+          );
+          if (prReq) {
+            mappings.push({
+              id: `MAP-${requirement.id}-${prReq.id}`,
+              from: requirement.id,
+              to: prReq.id,
+              type: 'implemented_by',
+              direction: 'forward',
+              strength: 'strong',
+              description: `Issue ${requirement.number} implemented by PR ${pr.number}`
+            });
+            
+            relationships.push({
+              source: requirement.id,
+              target: prReq.id,
+              type: 'implemented_by',
+              weight: 2
+            });
+          }
+        });
+      }
+    });
+  }
+
+  // Create backward traceability: Implementation → Requirements → Business Goals
+  if (direction === 'backward' || direction === 'bidirectional') {
+    requirements.forEach(requirement => {
+      if (requirement.type === 'implementation') {
+        // Map PR back to issues
+        requirement.linkedIssues.forEach((issueNumber: number) => {
+          const issueReq = requirements.find(r => 
+            r.type === 'issue' && r.number === issueNumber
+          );
+          if (issueReq) {
+            mappings.push({
+              id: `MAP-${requirement.id}-${issueReq.id}`,
+              from: requirement.id,
+              to: issueReq.id,
+              type: 'traces_to',
+              direction: 'backward',
+              strength: 'strong',
+              description: `PR ${requirement.number} traces back to issue ${issueNumber}`
+            });
+            
+            relationships.push({
+              source: requirement.id,
+              target: issueReq.id,
+              type: 'traces_to',
+              weight: 2
+            });
+          }
+        });
+      }
+    });
+  }
+
+  // Create dependency relationships
+  requirements.forEach(requirement => {
+    if (requirement.dependencies && requirement.dependencies.length > 0) {
+      requirement.dependencies.forEach((dep: string) => {
+        const depNumber = extractNumberFromString(dep);
+        if (depNumber) {
+          const depReq = requirements.find(r => r.number === depNumber);
+          if (depReq) {
+            mappings.push({
+              id: `MAP-${requirement.id}-${depReq.id}`,
+              from: requirement.id,
+              to: depReq.id,
+              type: 'depends_on',
+              direction: 'dependency',
+              strength: 'medium',
+              description: `${requirement.title} depends on ${depReq.title}`
+            });
+            
+            relationships.push({
+              source: requirement.id,
+              target: depReq.id,
+              type: 'depends_on',
+              weight: 1.5
+            });
+          }
+        }
+      });
+    }
+  });
+
+  return { mappings, relationships };
+}
+
+function generateCoverageAnalysis(requirements: any[], traceabilityData: any): any {
+  const totalRequirements = requirements.filter(r => r.type === 'issue' || r.type === 'milestone').length;
+  const mappedRequirements = new Set();
+  
+  traceabilityData.mappings.forEach((mapping: any) => {
+    mappedRequirements.add(mapping.from);
+    mappedRequirements.add(mapping.to);
+  });
+  
+  const actualMappedCount = requirements.filter(r => mappedRequirements.has(r.id)).length;
+  const coveragePercentage = totalRequirements > 0 ? Math.round((actualMappedCount / totalRequirements) * 100) : 0;
+  
+  // Identify gaps
+  const unmappedRequirements = requirements.filter(r => 
+    (r.type === 'issue' || r.type === 'milestone') && !mappedRequirements.has(r.id)
+  );
+  
+  // Identify orphaned implementations
+  const orphanedImplementations = requirements.filter(r => 
+    r.type === 'implementation' && !mappedRequirements.has(r.id)
+  );
+  
+  return {
+    coveragePercentage,
+    totalRequirements,
+    mappedRequirements: actualMappedCount,
+    unmappedRequirements: unmappedRequirements.length,
+    orphanedImplementations: orphanedImplementations.length,
+    gaps: unmappedRequirements.map(r => ({
+      id: r.id,
+      title: r.title,
+      type: r.type,
+      priority: r.priority,
+      reason: 'No implementation or traceability found'
+    })),
+    orphans: orphanedImplementations.map(r => ({
+      id: r.id,
+      title: r.title,
+      type: r.type,
+      reason: 'Implementation without clear requirement traceability'
+    })),
+    recommendations: generateCoverageRecommendations(coveragePercentage, unmappedRequirements, orphanedImplementations)
+  };
+}
+
+function generateImpactAnalysis(traceabilityData: any, data: { issues: any[], pullRequests: any[] }): any {
+  const impactMap: { [key: string]: any } = {};
+  
+  // Calculate impact based on number of connections
+  traceabilityData.relationships.forEach((rel: any) => {
+    if (!impactMap[rel.source]) {
+      impactMap[rel.source] = { incoming: 0, outgoing: 0, totalWeight: 0 };
+    }
+    if (!impactMap[rel.target]) {
+      impactMap[rel.target] = { incoming: 0, outgoing: 0, totalWeight: 0 };
+    }
+    
+    impactMap[rel.source].outgoing += 1;
+    impactMap[rel.source].totalWeight += rel.weight;
+    impactMap[rel.target].incoming += 1;
+    impactMap[rel.target].totalWeight += rel.weight;
+  });
+  
+  // Identify high-impact requirements (most connections)
+  const highImpactRequirements = Object.entries(impactMap)
+    .filter(([_, impact]: [string, any]) => impact.totalWeight > 3)
+    .sort((a, b) => (b[1] as any).totalWeight - (a[1] as any).totalWeight)
+    .slice(0, 10)
+    .map(([id, impact]) => ({ id, ...impact }));
+  
+  // Identify critical path (requirements with many dependencies)
+  const criticalPathRequirements = Object.entries(impactMap)
+    .filter(([_, impact]: [string, any]) => impact.outgoing > 2)
+    .sort((a, b) => (b[1] as any).outgoing - (a[1] as any).outgoing)
+    .slice(0, 5)
+    .map(([id, impact]) => ({ id, ...impact }));
+  
+  return {
+    highImpactRequirements,
+    criticalPathRequirements,
+    totalConnections: traceabilityData.relationships.length,
+    averageConnections: traceabilityData.relationships.length / Object.keys(impactMap).length,
+    riskAssessment: {
+      highRisk: highImpactRequirements.length,
+      mediumRisk: criticalPathRequirements.length,
+      lowRisk: Object.keys(impactMap).length - highImpactRequirements.length - criticalPathRequirements.length
+    },
+    changeImpactGuidelines: [
+      'Changes to high-impact requirements may affect multiple components',
+      'Critical path requirements should be handled with extra caution',
+      'Consider dependency chains when planning changes',
+      'Impact analysis should be performed before major modifications'
+    ]
+  };
+}
+
+function generateDependencyGraph(traceabilityData: any): any {
+  const nodes = new Set();
+  const edges: any[] = [];
+  
+  traceabilityData.relationships.forEach((rel: any) => {
+    nodes.add(rel.source);
+    nodes.add(rel.target);
+    edges.push({
+      from: rel.source,
+      to: rel.target,
+      type: rel.type,
+      weight: rel.weight,
+      style: getEdgeStyle(rel.type)
+    });
+  });
+  
+  // Create clusters based on requirement types
+  const clusters: { [key: string]: string[] } = {};
+  Array.from(nodes).forEach((nodeId: any) => {
+    const nodeType = nodeId.split('-')[1]; // Extract type from ID format
+    if (!clusters[nodeType]) {
+      clusters[nodeType] = [];
+    }
+    clusters[nodeType].push(nodeId);
+  });
+  
+  return {
+    nodes: Array.from(nodes).map(nodeId => ({
+      id: nodeId,
+      label: getNodeLabel(nodeId as string),
+      type: getNodeType(nodeId as string),
+      style: getNodeStyle(nodeId as string)
+    })),
+    edges,
+    clusters,
+    statistics: {
+      totalNodes: nodes.size,
+      totalEdges: edges.length,
+      density: edges.length / (nodes.size * (nodes.size - 1)),
+      averageDegree: (edges.length * 2) / nodes.size
+    },
+    visualization: {
+      layout: 'hierarchical',
+      direction: 'UD', // Up-Down
+      sortMethod: 'directed',
+      shakeTowards: 'leaves'
+    }
+  };
+}
+
+async function generateMarkdownMatrix(matrixData: any, complianceLevel: string): Promise<string> {
+  let markdown = `# 🔗 **${matrixData.title}**\n\n`;
+  
+  // Add metadata section
+  markdown += `## 📋 **Matrix Information**\n\n`;
+  markdown += `- **Generated**: ${new Date(matrixData.metadata.generatedAt).toLocaleString()}\n`;
+  markdown += `- **Repository**: ${matrixData.metadata.repository}\n`;
+  markdown += `- **Traceability Direction**: ${matrixData.metadata.traceabilityDirection}\n`;
+  markdown += `- **Compliance Level**: ${matrixData.metadata.complianceLevel}\n`;
+  markdown += `- **Source Types**: ${matrixData.metadata.sourceTypes.join(', ')}\n\n`;
+  
+  // Add summary section
+  markdown += `## 📊 **Summary**\n\n`;
+  markdown += `| Metric | Count | Details |\n`;
+  markdown += `|--------|-------|----------|\n`;
+  markdown += `| Total Requirements | ${matrixData.summary.totalRequirements} | All identified requirements |\n`;
+  markdown += `| Mapped Requirements | ${matrixData.summary.mappedRequirements} | Requirements with traceability |\n`;
+  markdown += `| Coverage Percentage | ${matrixData.summary.coveragePercentage}% | Traceability coverage |\n`;
+  markdown += `| Total Issues | ${matrixData.summary.totalIssues} | GitHub issues analyzed |\n`;
+  markdown += `| Total Milestones | ${matrixData.summary.totalMilestones} | Project milestones |\n`;
+  markdown += `| Total Pull Requests | ${matrixData.summary.totalPullRequests} | Implementation artifacts |\n\n`;
+  
+  // Add requirements breakdown
+  markdown += `## 📑 **Requirements Breakdown**\n\n`;
+  
+  const requirementsByType = matrixData.requirements.reduce((acc: any, req: any) => {
+    if (!acc[req.type]) acc[req.type] = [];
+    acc[req.type].push(req);
+    return acc;
+  }, {});
+  
+  Object.entries(requirementsByType).forEach(([type, reqs]: [string, any]) => {
+    markdown += `### ${type.charAt(0).toUpperCase() + type.slice(1)} Requirements (${reqs.length})\n\n`;
+    
+    if (complianceLevel === 'enterprise') {
+      markdown += `| ID | Title | Priority | Status | Business Value | Technical Complexity | Traceability |\n`;
+      markdown += `|----|-------|----------|--------|----------------|---------------------|-------------|\n`;
+      reqs.slice(0, 10).forEach((req: any) => {
+        markdown += `| \`${req.id}\` | [${req.title}](${req.url}) | ${req.priority} | ${req.status} | ${req.businessValue} | ${req.technicalComplexity} | ${req.traceabilityLevel} |\n`;
+      });
+    } else {
+      markdown += `| ID | Title | Priority | Status | Links |\n`;
+      markdown += `|----|-------|----------|--------|---------|\n`;
+      reqs.slice(0, 10).forEach((req: any) => {
+        markdown += `| \`${req.id}\` | [${req.title}](${req.url}) | ${req.priority} | ${req.status} | [GitHub](${req.url}) |\n`;
+      });
+    }
+    
+    if (reqs.length > 10) {
+      markdown += `\n*... and ${reqs.length - 10} more ${type} requirements*\n`;
     }
     markdown += `\n`;
   });
   
-  // Add issue breakdown if requested
-  if (focusAreas.length > 0) {
-    markdown += `## 📋 Focus Area Breakdown\n\n`;
-    focusAreas.forEach(area => {
-      const areaIssues = roadmapData.issues.filter((issue: any) => 
-        issue.labels.some((label: any) => label.name.toLowerCase().includes(area.toLowerCase()))
-      );
+  // Add traceability mappings
+  markdown += `## 🔗 **Traceability Mappings**\n\n`;
+  markdown += `Found ${matrixData.traceabilityMappings.length} traceability relationships:\n\n`;
+  
+  const mappingsByType = matrixData.traceabilityMappings.reduce((acc: any, mapping: any) => {
+    if (!acc[mapping.type]) acc[mapping.type] = [];
+    acc[mapping.type].push(mapping);
+    return acc;
+  }, {});
+  
+  Object.entries(mappingsByType).forEach(([type, mappings]: [string, any]) => {
+    markdown += `### ${type.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())} (${mappings.length})\n\n`;
+    
+    mappings.slice(0, 15).forEach((mapping: any) => {
+      const fromReq = matrixData.requirements.find((r: any) => r.id === mapping.from);
+      const toReq = matrixData.requirements.find((r: any) => r.id === mapping.to);
       
-      if (areaIssues.length > 0) {
-        markdown += `### ${area}\n`;
-        markdown += `**Issues:** ${areaIssues.length}\n\n`;
-        areaIssues.slice(0, 5).forEach((issue: any) => {
-          markdown += `- [${issue.title}](${issue.html_url}) (#${issue.number})\n`;
-        });
-        if (areaIssues.length > 5) {
-          markdown += `- ... and ${areaIssues.length - 5} more\n`;
-        }
-        markdown += `\n`;
+      if (fromReq && toReq) {
+        markdown += `- **${fromReq.title}** ${getArrowForType(mapping.type)} **${toReq.title}**\n`;
+        markdown += `  - *${mapping.description}*\n`;
+        markdown += `  - Strength: ${mapping.strength} | Direction: ${mapping.direction}\n\n`;
       }
     });
+    
+    if (mappings.length > 15) {
+      markdown += `*... and ${mappings.length - 15} more ${type} relationships*\n\n`;
+    }
+  });
+  
+  // Add coverage analysis
+  if (matrixData.coverageAnalysis) {
+    markdown += `## 📈 **Coverage Analysis**\n\n`;
+    markdown += `### Overall Coverage: ${matrixData.coverageAnalysis.coveragePercentage}%\n\n`;
+    
+    markdown += `| Metric | Count | Percentage |\n`;
+    markdown += `|--------|-------|------------|\n`;
+    markdown += `| Total Requirements | ${matrixData.coverageAnalysis.totalRequirements} | 100% |\n`;
+    markdown += `| Mapped Requirements | ${matrixData.coverageAnalysis.mappedRequirements} | ${matrixData.coverageAnalysis.coveragePercentage}% |\n`;
+    markdown += `| Unmapped Requirements | ${matrixData.coverageAnalysis.unmappedRequirements} | ${Math.round((matrixData.coverageAnalysis.unmappedRequirements / matrixData.coverageAnalysis.totalRequirements) * 100)}% |\n`;
+    markdown += `| Orphaned Implementations | ${matrixData.coverageAnalysis.orphanedImplementations} | - |\n\n`;
+    
+    if (matrixData.coverageAnalysis.gaps.length > 0) {
+      markdown += `### ⚠️ Coverage Gaps (${matrixData.coverageAnalysis.gaps.length})\n\n`;
+      matrixData.coverageAnalysis.gaps.slice(0, 10).forEach((gap: any) => {
+        markdown += `- **${gap.title}** (\`${gap.id}\`) - Priority: ${gap.priority}\n`;
+        markdown += `  - *${gap.reason}*\n\n`;
+      });
+    }
+    
+    if (matrixData.coverageAnalysis.orphans.length > 0) {
+      markdown += `### 🔍 Orphaned Implementations (${matrixData.coverageAnalysis.orphans.length})\n\n`;
+      matrixData.coverageAnalysis.orphans.slice(0, 5).forEach((orphan: any) => {
+        markdown += `- **${orphan.title}** (\`${orphan.id}\`)\n`;
+        markdown += `  - *${orphan.reason}*\n\n`;
+      });
+    }
+    
+    if (matrixData.coverageAnalysis.recommendations.length > 0) {
+      markdown += `### 💡 Recommendations\n\n`;
+      matrixData.coverageAnalysis.recommendations.forEach((rec: string) => {
+        markdown += `- ${rec}\n`;
+      });
+      markdown += `\n`;
+    }
   }
   
+  // Add impact analysis
+  if (matrixData.impactAnalysis) {
+    markdown += `## 🎯 **Impact Analysis**\n\n`;
+    
+    if (matrixData.impactAnalysis.highImpactRequirements.length > 0) {
+      markdown += `### High-Impact Requirements\n\n`;
+      matrixData.impactAnalysis.highImpactRequirements.forEach((req: any) => {
+        const requirement = matrixData.requirements.find((r: any) => r.id === req.id);
+        if (requirement) {
+          markdown += `- **${requirement.title}** (\`${req.id}\`)\n`;
+          markdown += `  - Connections: ${req.totalWeight} | Incoming: ${req.incoming} | Outgoing: ${req.outgoing}\n\n`;
+        }
+      });
+    }
+    
+    if (matrixData.impactAnalysis.criticalPathRequirements.length > 0) {
+      markdown += `### Critical Path Requirements\n\n`;
+      matrixData.impactAnalysis.criticalPathRequirements.forEach((req: any) => {
+        const requirement = matrixData.requirements.find((r: any) => r.id === req.id);
+        if (requirement) {
+          markdown += `- **${requirement.title}** (\`${req.id}\`)\n`;
+          markdown += `  - Dependencies: ${req.outgoing} | Risk Level: High\n\n`;
+        }
+      });
+    }
+    
+    markdown += `### Risk Assessment\n\n`;
+    markdown += `- **High Risk Requirements**: ${matrixData.impactAnalysis.riskAssessment.highRisk}\n`;
+    markdown += `- **Medium Risk Requirements**: ${matrixData.impactAnalysis.riskAssessment.mediumRisk}\n`;
+    markdown += `- **Low Risk Requirements**: ${matrixData.impactAnalysis.riskAssessment.lowRisk}\n\n`;
+    
+    markdown += `### Change Impact Guidelines\n\n`;
+    matrixData.impactAnalysis.changeImpactGuidelines.forEach((guideline: string) => {
+      markdown += `- ${guideline}\n`;
+    });
+    markdown += `\n`;
+  }
+  
+  // Add dependency graph information
+  if (matrixData.dependencyGraph) {
+    markdown += `## 🕸️ **Dependency Graph**\n\n`;
+    markdown += `### Graph Statistics\n\n`;
+    markdown += `- **Total Nodes**: ${matrixData.dependencyGraph.statistics.totalNodes}\n`;
+    markdown += `- **Total Edges**: ${matrixData.dependencyGraph.statistics.totalEdges}\n`;
+    markdown += `- **Graph Density**: ${(matrixData.dependencyGraph.statistics.density * 100).toFixed(2)}%\n`;
+    markdown += `- **Average Degree**: ${matrixData.dependencyGraph.statistics.averageDegree.toFixed(2)}\n\n`;
+    
+    markdown += `### Node Clusters\n\n`;
+    Object.entries(matrixData.dependencyGraph.clusters).forEach(([type, nodes]: [string, any]) => {
+      markdown += `- **${type.toUpperCase()}**: ${nodes.length} nodes\n`;
+    });
+    markdown += `\n`;
+    
+    markdown += `### Visualization Configuration\n\n`;
+    markdown += `\`\`\`json\n`;
+    markdown += JSON.stringify(matrixData.dependencyGraph.visualization, null, 2);
+    markdown += `\n\`\`\`\n\n`;
+  }
+  
+  // Add compliance section for enterprise level
+  if (complianceLevel === 'enterprise') {
+    markdown += `## 🛡️ **Compliance Information**\n\n`;
+    markdown += `This traceability matrix meets enterprise compliance standards:\n\n`;
+    markdown += `- ✅ **Bidirectional Traceability**: Requirements can be traced both forward and backward\n`;
+    markdown += `- ✅ **Coverage Analysis**: Comprehensive gap identification and reporting\n`;
+    markdown += `- ✅ **Impact Assessment**: Change impact analysis and risk evaluation\n`;
+    markdown += `- ✅ **Audit Trail**: Complete lineage from requirements to implementation\n`;
+    markdown += `- ✅ **Dependency Mapping**: Visual representation of requirement relationships\n`;
+    markdown += `- ✅ **Automated Generation**: Consistent and repeatable matrix creation\n\n`;
+    
+    markdown += `### Compliance Checklist\n\n`;
+    markdown += `- [ ] Review all unmapped requirements for business justification\n`;
+    markdown += `- [ ] Validate high-impact requirements have proper approval\n`;
+    markdown += `- [ ] Ensure critical path requirements have mitigation plans\n`;
+    markdown += `- [ ] Document rationale for orphaned implementations\n`;
+    markdown += `- [ ] Schedule regular traceability matrix updates\n\n`;
+  }
+  
+  // Add footer with generation info
+  markdown += `---\n\n`;
+  markdown += `*Generated by GitHub Project Manager MCP - Traceability Matrix Tool*\n`;
+  markdown += `*Matrix ID: \`${matrixData.title.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}\`*\n`;
+  markdown += `*Compliance Level: ${complianceLevel}*\n`;
+  
   return markdown;
+}
+
+// Additional helper functions for traceability matrix generation
+function extractPriorityFromIssue(issue: any): string {
+  const priorityLabels = issue.labels.filter((label: any) => 
+    ['high', 'medium', 'low', 'critical', 'urgent'].some(p => 
+      label.name.toLowerCase().includes(p)
+    )
+  );
+  
+  if (priorityLabels.length > 0) {
+    const label = priorityLabels[0].name.toLowerCase();
+    if (label.includes('critical') || label.includes('urgent')) return 'high';
+    if (label.includes('high')) return 'high';
+    if (label.includes('medium')) return 'medium';
+    if (label.includes('low')) return 'low';
+  }
+  
+  return 'medium'; // Default priority
+}
+
+function categorizeRequirement(title: string, body: string, labels: any[]): string {
+  const text = `${title} ${body}`.toLowerCase();
+  const labelNames = labels.map(l => l.name.toLowerCase()).join(' ');
+  const fullText = `${text} ${labelNames}`;
+  
+  if (fullText.includes('user') || fullText.includes('persona')) return 'user-requirement';
+  if (fullText.includes('business') || fullText.includes('stakeholder')) return 'business-requirement';
+  if (fullText.includes('functional') || fullText.includes('feature')) return 'functional-requirement';
+  if (fullText.includes('performance') || fullText.includes('scalability')) return 'non-functional-requirement';
+  if (fullText.includes('security') || fullText.includes('compliance')) return 'security-requirement';
+  if (fullText.includes('technical') || fullText.includes('system')) return 'technical-requirement';
+  if (fullText.includes('interface') || fullText.includes('api')) return 'interface-requirement';
+  if (fullText.includes('quality') || fullText.includes('test')) return 'quality-requirement';
+  
+  return 'general-requirement';
+}
+
+function extractAcceptanceCriteria(body: string): string[] {
+  if (!body) return [];
+  
+  const criteria: string[] = [];
+  const patterns = [
+    /acceptance criteria:?(.+?)(?=\n##|\n\*\*|$)/is,
+    /ac:?(.+?)(?=\n##|\n\*\*|$)/is,
+    /criteria:?(.+?)(?=\n##|\n\*\*|$)/is,
+    /- \[ \] (.+)/g
+  ];
+  
+  patterns.forEach(pattern => {
+    const matches = body.match(pattern);
+    if (matches) {
+      if (pattern.source.includes('- \\[ \\]')) {
+        // Extract checklist items
+        let match;
+        while ((match = pattern.exec(body)) !== null) {
+          criteria.push(match[1].trim());
+        }
+      } else {
+        // Extract from sections
+        const content = matches[1] || matches[0];
+        const lines = content.split('\n')
+          .map(line => line.trim())
+          .filter(line => line.length > 0 && !line.startsWith('#'));
+        criteria.push(...lines);
+      }
+    }
+  });
+  
+  return criteria.slice(0, 10); // Limit to first 10 criteria
+}
+
+function extractIssueDependencies(body: string): number[] {
+  if (!body) return [];
+  
+  const dependencies: number[] = [];
+  const patterns = [
+    /depends on #(\d+)/gi,
+    /blocked by #(\d+)/gi,
+    /requires #(\d+)/gi,
+    /needs #(\d+)/gi,
+    /after #(\d+)/gi
+  ];
+  
+  patterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(body)) !== null) {
+      dependencies.push(parseInt(match[1]));
+    }
+  });
+  
+  return [...new Set(dependencies)]; // Remove duplicates
+}
+
+function extractTestReferences(body: string): string[] {
+  if (!body) return [];
+  
+  const testRefs: string[] = [];
+  const patterns = [
+    /test case:?(.+)/gi,
+    /test scenario:?(.+)/gi,
+    /unit test:?(.+)/gi,
+    /integration test:?(.+)/gi,
+    /e2e test:?(.+)/gi
+  ];
+  
+  patterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(body)) !== null) {
+      testRefs.push(match[1].trim());
+    }
+  });
+  
+  return testRefs.slice(0, 5); // Limit to first 5 test references
+}
+
+function calculateIssueBusinessValue(issue: any): string {
+  const title = issue.title.toLowerCase();
+  const body = (issue.body || '').toLowerCase();
+  const labels = issue.labels.map((l: any) => l.name.toLowerCase()).join(' ');
+  
+  const highValueKeywords = ['revenue', 'customer', 'business critical', 'strategic', 'competitive'];
+  const mediumValueKeywords = ['efficiency', 'productivity', 'user experience', 'performance'];
+  const lowValueKeywords = ['internal', 'maintenance', 'refactor', 'cleanup'];
+  
+  const allText = `${title} ${body} ${labels}`;
+  
+  if (highValueKeywords.some(keyword => allText.includes(keyword))) return 'high';
+  if (mediumValueKeywords.some(keyword => allText.includes(keyword))) return 'medium';
+  if (lowValueKeywords.some(keyword => allText.includes(keyword))) return 'low';
+  
+  return 'medium'; // Default
+}
+
+function calculateTechnicalComplexity(issue: any): string {
+  const title = issue.title.toLowerCase();
+  const body = (issue.body || '').toLowerCase();
+  const labels = issue.labels.map((l: any) => l.name.toLowerCase()).join(' ');
+  
+  const highComplexityKeywords = ['architecture', 'migration', 'integration', 'algorithm', 'performance'];
+  const mediumComplexityKeywords = ['api', 'database', 'authentication', 'validation'];
+  const lowComplexityKeywords = ['ui', 'text', 'copy', 'styling', 'documentation'];
+  
+  const allText = `${title} ${body} ${labels}`;
+  
+  if (highComplexityKeywords.some(keyword => allText.includes(keyword))) return 'high';
+  if (mediumComplexityKeywords.some(keyword => allText.includes(keyword))) return 'medium';
+  if (lowComplexityKeywords.some(keyword => allText.includes(keyword))) return 'low';
+  
+  return 'medium'; // Default
+}
+
+function extractLinkedIssuesFromPR(body: string): number[] {
+  if (!body) return [];
+  
+  const linkedIssues: number[] = [];
+  const patterns = [
+    /closes #(\d+)/gi,
+    /fixes #(\d+)/gi,
+    /resolves #(\d+)/gi,
+    /#(\d+)/g
+  ];
+  
+  patterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(body)) !== null) {
+      linkedIssues.push(parseInt(match[1]));
+    }
+  });
+  
+  return [...new Set(linkedIssues)]; // Remove duplicates
+}
+
+function calculatePRComplexity(pr: any): string {
+  const changedFiles = pr.changed_files || 0;
+  const additions = pr.additions || 0;
+  const deletions = pr.deletions || 0;
+  const totalChanges = additions + deletions;
+  
+  if (changedFiles > 20 || totalChanges > 1000) return 'high';
+  if (changedFiles > 10 || totalChanges > 500) return 'medium';
+  return 'low';
+}
+
+function extractNumberFromString(str: string): number | null {
+  const match = str.match(/\d+/);
+  return match ? parseInt(match[0]) : null;
+}
+
+function generateCoverageRecommendations(
+  coveragePercentage: number,
+  unmappedRequirements: any[],
+  orphanedImplementations: any[]
+): string[] {
+  const recommendations: string[] = [];
+  
+  if (coveragePercentage < 70) {
+    recommendations.push('⚠️ Coverage below 70% - Focus on mapping unmapped requirements');
+  }
+  
+  if (unmappedRequirements.length > 0) {
+    recommendations.push(`📋 ${unmappedRequirements.length} requirements need implementation or traceability`);
+  }
+  
+  if (orphanedImplementations.length > 0) {
+    recommendations.push(`🔍 ${orphanedImplementations.length} implementations need requirement linkage`);
+  }
+  
+  if (coveragePercentage > 90) {
+    recommendations.push('✅ Excellent traceability coverage - Focus on maintaining quality');
+  }
+  
+  recommendations.push('🔄 Schedule regular traceability matrix updates');
+  recommendations.push('📊 Consider implementing automated traceability checks in CI/CD');
+  
+  return recommendations;
+}
+
+function getArrowForType(type: string): string {
+  const arrows: { [key: string]: string } = {
+    'implements': '→',
+    'implemented_by': '←',
+    'traces_to': '⟵',
+    'depends_on': '⟶',
+    'contributes_to': '↗',
+    'tested_by': '⊢',
+    'documents': '📝',
+    'validates': '✓'
+  };
+  
+  return arrows[type] || '↔';
+}
+
+function getNodeLabel(nodeId: string): string {
+  const parts = nodeId.split('-');
+  if (parts.length >= 3) {
+    const type = parts[1];
+    const number = parts[2];
+    return `${type.toUpperCase()}-${number}`;
+  }
+  return nodeId;
+}
+
+function getNodeType(nodeId: string): string {
+  const parts = nodeId.split('-');
+  return parts.length >= 2 ? parts[1] : 'unknown';
+}
+
+function getNodeStyle(nodeId: string): any {
+  const type = getNodeType(nodeId);
+  const styles: { [key: string]: any } = {
+    'ISSUE': { color: '#28a745', shape: 'box' },
+    'MILESTONE': { color: '#007bff', shape: 'diamond' },
+    'PR': { color: '#6f42c1', shape: 'circle' },
+    'LABEL': { color: '#fd7e14', shape: 'triangle' }
+  };
+  
+  return styles[type.toUpperCase()] || { color: '#6c757d', shape: 'dot' };
+}
+
+function getEdgeStyle(type: string): any {
+  const styles: { [key: string]: any } = {
+    'implements': { color: '#28a745', dashes: false },
+    'depends_on': { color: '#dc3545', dashes: true },
+    'traces_to': { color: '#17a2b8', dashes: false },
+    'contributes_to': { color: '#ffc107', dashes: false }
+  };
+  
+  return styles[type] || { color: '#6c757d', dashes: false };
+}
+
+function generateCSVMatrix(matrixData: any): string {
+  let csv = 'ID,Title,Type,Priority,Status,Business Value,Technical Complexity,Traceability Level,URL\n';
+  
+  matrixData.requirements.forEach((req: any) => {
+    const row = [
+      req.id,
+      `"${req.title.replace(/"/g, '""')}"`,
+      req.type,
+      req.priority,
+      req.status,
+      req.businessValue,
+      req.technicalComplexity,
+      req.traceabilityLevel,
+      req.url
+    ].join(',');
+    csv += row + '\n';
+  });
+  
+  csv += '\n\nTraceability Mappings\n';
+  csv += 'From,To,Type,Direction,Strength,Description\n';
+  
+  matrixData.traceabilityMappings.forEach((mapping: any) => {
+    const row = [
+      mapping.from,
+      mapping.to,
+      mapping.type,
+      mapping.direction,
+      mapping.strength,
+      `"${mapping.description.replace(/"/g, '""')}"`
+    ].join(',');
+    csv += row + '\n';
+  });
+  
+  return csv;
+}
+
+function generateHTMLMatrix(matrixData: any): string {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${matrixData.title}</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .header { background: #f8f9fa; padding: 20px; border-radius: 5px; }
+        .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+        .metric { background: #e9ecef; padding: 15px; border-radius: 5px; text-align: center; }
+        .requirements-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        .requirements-table th, .requirements-table td { border: 1px solid #dee2e6; padding: 8px; text-align: left; }
+        .requirements-table th { background-color: #f8f9fa; }
+        .priority-high { background-color: #f8d7da; }
+        .priority-medium { background-color: #fff3cd; }
+        .priority-low { background-color: #d1ecf1; }
+        .mapping { margin: 10px 0; padding: 10px; background: #f8f9fa; border-left: 4px solid #007bff; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔗 ${matrixData.title}</h1>
+        <p><strong>Generated:</strong> ${new Date(matrixData.metadata.generatedAt).toLocaleString()}</p>
+        <p><strong>Repository:</strong> ${matrixData.metadata.repository}</p>
+        <p><strong>Compliance Level:</strong> ${matrixData.metadata.complianceLevel}</p>
+    </div>
+
+    <div class="summary">
+        <div class="metric">
+            <h3>${matrixData.summary.totalRequirements}</h3>
+            <p>Total Requirements</p>
+        </div>
+        <div class="metric">
+            <h3>${matrixData.summary.coveragePercentage}%</h3>
+            <p>Coverage</p>
+        </div>
+        <div class="metric">
+            <h3>${matrixData.summary.mappedRequirements}</h3>
+            <p>Mapped Requirements</p>
+        </div>
+    </div>
+
+    <h2>📋 Requirements</h2>
+    <table class="requirements-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Title</th>
+                <th>Type</th>
+                <th>Priority</th>
+                <th>Status</th>
+                <th>Business Value</th>
+                <th>Links</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${matrixData.requirements.slice(0, 50).map((req: any) => `
+                <tr class="priority-${req.priority}">
+                    <td><code>${req.id}</code></td>
+                    <td><a href="${req.url}" target="_blank">${req.title}</a></td>
+                    <td>${req.type}</td>
+                    <td>${req.priority}</td>
+                    <td>${req.status}</td>
+                    <td>${req.businessValue}</td>
+                    <td><a href="${req.url}" target="_blank">View</a></td>
+                </tr>
+            `).join('')}
+        </tbody>
+    </table>
+
+    <h2>🔗 Traceability Mappings</h2>
+    ${matrixData.traceabilityMappings.slice(0, 20).map((mapping: any) => `
+        <div class="mapping">
+            <strong>${mapping.type.replace(/_/g, ' ').toUpperCase()}:</strong>
+            ${mapping.from} → ${mapping.to}<br>
+            <em>${mapping.description}</em>
+        </div>
+    `).join('')}
+
+    <footer style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #dee2e6; color: #6c757d;">
+        <p>Generated by GitHub Project Manager MCP - Traceability Matrix Tool</p>
+        <p>Matrix ID: ${matrixData.title.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}</p>
+    </footer>
+</body>
+</html>
+  `;
 }
