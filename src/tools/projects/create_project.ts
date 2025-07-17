@@ -95,6 +95,10 @@ export async function createProject(config: GitHubConfig, args: CreateProjectArg
     };
 
     console.error(`🚀 Creating project for ${ownerType}: ${owner} with input:`, JSON.stringify(input, null, 2));
+    
+    if (ownerType === 'User') {
+      console.error(`📝 Note: Personal accounts can create projects. If you encounter permission issues, ensure your GitHub token has the "project" scope.`);
+    }
 
     const result = await graphqlWithAuth(createProjectMutation, { input });
     const project = result.createProjectV2.projectV2;
@@ -126,14 +130,20 @@ export async function createProject(config: GitHubConfig, args: CreateProjectArg
   } catch (error: any) {
     console.error(`❌ Create project failed:`, error);
     
+    if (error.message?.includes('Must have admin access') || error.message?.includes('Must be an organization')) {
+      throw new Error(`Permission denied. For personal accounts, ensure your GitHub token has the "project" scope. For organizations, you need admin access.`);
+    }
     if (error.message?.includes('insufficient permission') || error.message?.includes('admin access')) {
-      throw new Error('Insufficient permissions to create projects. Personal GitHub accounts may need to enable Projects in Settings → Features → Projects.');
+      throw new Error('Insufficient permissions to create projects. Please ensure your GitHub token has the "project" scope. Run: gh auth login --scopes "project"');
     }
     if (error.message?.includes('already exists')) {
       throw new Error(`Project with title "${args.title}" already exists. Choose a different title.`);
     }
     if (error.message?.includes('Could not resolve to an Organization')) {
-      throw new Error(`GitHub account "${owner}" is a personal account, not an organization. Personal accounts can create projects, but you may need to enable Projects in your GitHub Settings → Features.`);
+      throw new Error(`GitHub account "${owner}" was not found. Please verify the GITHUB_OWNER environment variable is set correctly.`);
+    }
+    if (error.message?.includes('Bad credentials') || error.message?.includes('401')) {
+      throw new Error('Authentication failed. Please check your GitHub token and run: gh auth login --scopes "project"');
     }
     throw new Error(`Failed to create project: ${error.message}`);
   }

@@ -177,8 +177,8 @@ export async function listProjects(config: GitHubConfig, args: ListProjectsArgs)
       
       if (ownerType === 'User') {
         response += `💡 **For personal accounts:**\n`;
-        response += `• Enable Projects in GitHub Settings → Features → Projects\n`;
         response += `• Use 'create_project' to create your first project\n`;
+        response += `• Ensure your GitHub token has "project" scope if you encounter permission issues\n`;
         response += `• Visit GitHub.com/users/${owner}/projects to view in browser`;
       } else {
         response += `💡 **Create your first project:**\n`;
