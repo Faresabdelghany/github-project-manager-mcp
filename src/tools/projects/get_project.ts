@@ -28,12 +28,11 @@ export async function getProject(config: GitHubConfig, args: GetProjectArgs): Pr
     const includeViews = args.include_views !== false;
     const includeItems = args.include_items !== false;
 
-    let projectQuery;
-    let variables: any;
+    let project;
 
     if (args.project_id) {
-      // Query by project ID
-      projectQuery = `
+      // Query by project ID (works for both users and organizations)
+      const projectQuery = `
         query($projectId: ID!, $includeFields: Boolean!, $includeViews: Boolean!, $includeItems: Boolean!) {
           node(id: $projectId) {
             ... on ProjectV2 {
@@ -43,7 +42,6 @@ export async function getProject(config: GitHubConfig, args: GetProjectArgs): Pr
               shortDescription
               readme
               url
-              visibility
               public
               closed
               createdAt
@@ -52,10 +50,12 @@ export async function getProject(config: GitHubConfig, args: GetProjectArgs): Pr
                 ... on User {
                   login
                   id
+                  __typename
                 }
                 ... on Organization {
                   login
                   id
+                  __typename
                 }
               }
               fields(first: 20) @include(if: $includeFields) {
@@ -129,218 +129,258 @@ export async function getProject(config: GitHubConfig, args: GetProjectArgs): Pr
           }
         }
       `;
-      variables = {
+
+      const result = await graphqlWithAuth(projectQuery, {
         projectId: args.project_id,
         includeFields,
         includeViews,
         includeItems
-      };
+      });
+
+      project = result.node;
+      
     } else {
-      // Query by project number
-      projectQuery = `
-        query($login: String!, $number: Int!, $includeFields: Boolean!, $includeViews: Boolean!, $includeItems: Boolean!) {
+      // Query by project number - need to determine user vs organization first
+      const ownerQuery = `
+        query($login: String!) {
           user(login: $login) {
-            projectV2(number: $number) {
-              id
-              number
-              title
-              shortDescription
-              readme
-              url
-              visibility
-              public
-              closed
-              createdAt
-              updatedAt
-              owner {
-                ... on User {
-                  login
-                  id
-                }
-                ... on Organization {
-                  login
-                  id
-                }
-              }
-              fields(first: 20) @include(if: $includeFields) {
-                totalCount
-                nodes {
-                  ... on ProjectV2Field {
-                    id
-                    name
-                    dataType
-                    createdAt
-                    updatedAt
-                  }
-                  ... on ProjectV2SingleSelectField {
-                    id
-                    name
-                    dataType
-                    options {
-                      id
-                      name
-                      color
-                    }
-                  }
-                  ... on ProjectV2IterationField {
-                    id
-                    name
-                    dataType
-                    configuration {
-                      iterations {
-                        id
-                        title
-                        duration
-                        startDate
-                      }
-                    }
-                  }
-                }
-              }
-              views(first: 10) @include(if: $includeViews) {
-                totalCount
-                nodes {
-                  id
-                  name
-                  layout
-                  createdAt
-                  updatedAt
-                }
-              }
-              items(first: 20) @include(if: $includeItems) {
-                totalCount
-                nodes {
-                  id
-                  type
-                  createdAt
-                  content {
-                    ... on Issue {
-                      number
-                      title
-                      state
-                      url
-                    }
-                    ... on PullRequest {
-                      number
-                      title
-                      state
-                      url
-                    }
-                  }
-                }
-              }
-            }
+            id
+            login
+            __typename
           }
           organization(login: $login) {
-            projectV2(number: $number) {
-              id
-              number
-              title
-              shortDescription
-              readme
-              url
-              visibility
-              public
-              closed
-              createdAt
-              updatedAt
-              owner {
-                ... on User {
-                  login
-                  id
-                }
-                ... on Organization {
-                  login
-                  id
-                }
-              }
-              fields(first: 20) @include(if: $includeFields) {
-                totalCount
-                nodes {
-                  ... on ProjectV2Field {
-                    id
-                    name
-                    dataType
-                    createdAt
-                    updatedAt
-                  }
-                  ... on ProjectV2SingleSelectField {
-                    id
-                    name
-                    dataType
-                    options {
-                      id
-                      name
-                      color
-                    }
-                  }
-                  ... on ProjectV2IterationField {
-                    id
-                    name
-                    dataType
-                    configuration {
-                      iterations {
-                        id
-                        title
-                        duration
-                        startDate
-                      }
-                    }
-                  }
-                }
-              }
-              views(first: 10) @include(if: $includeViews) {
-                totalCount
-                nodes {
-                  id
-                  name
-                  layout
-                  createdAt
-                  updatedAt
-                }
-              }
-              items(first: 20) @include(if: $includeItems) {
-                totalCount
-                nodes {
-                  id
-                  type
-                  createdAt
-                  content {
-                    ... on Issue {
-                      number
-                      title
-                      state
-                      url
-                    }
-                    ... on PullRequest {
-                      number
-                      title
-                      state
-                      url
-                    }
-                  }
-                }
-              }
-            }
+            id
+            login
+            __typename
           }
         }
       `;
-      variables = {
-        login: owner,
-        number: args.project_number,
-        includeFields,
-        includeViews,
-        includeItems
-      };
-    }
 
-    const result = await graphqlWithAuth(projectQuery, variables);
-    
-    let project;
-    if (args.project_id) {
-      project = result.node;
-    } else {
-      project = result.user?.projectV2 || result.organization?.projectV2;
+      const ownerResult = await graphqlWithAuth(ownerQuery, { login: owner });
+      
+      if (ownerResult.user && !ownerResult.organization) {
+        // Query user project
+        const userProjectQuery = `
+          query($login: String!, $number: Int!, $includeFields: Boolean!, $includeViews: Boolean!, $includeItems: Boolean!) {
+            user(login: $login) {
+              projectV2(number: $number) {
+                id
+                number
+                title
+                shortDescription
+                readme
+                url
+                public
+                closed
+                createdAt
+                updatedAt
+                owner {
+                  ... on User {
+                    login
+                    id
+                    __typename
+                  }
+                  ... on Organization {
+                    login
+                    id
+                    __typename
+                  }
+                }
+                fields(first: 20) @include(if: $includeFields) {
+                  totalCount
+                  nodes {
+                    ... on ProjectV2Field {
+                      id
+                      name
+                      dataType
+                      createdAt
+                      updatedAt
+                    }
+                    ... on ProjectV2SingleSelectField {
+                      id
+                      name
+                      dataType
+                      options {
+                        id
+                        name
+                        color
+                      }
+                    }
+                    ... on ProjectV2IterationField {
+                      id
+                      name
+                      dataType
+                      configuration {
+                        iterations {
+                          id
+                          title
+                          duration
+                          startDate
+                        }
+                      }
+                    }
+                  }
+                }
+                views(first: 10) @include(if: $includeViews) {
+                  totalCount
+                  nodes {
+                    id
+                    name
+                    layout
+                    createdAt
+                    updatedAt
+                  }
+                }
+                items(first: 20) @include(if: $includeItems) {
+                  totalCount
+                  nodes {
+                    id
+                    type
+                    createdAt
+                    content {
+                      ... on Issue {
+                        number
+                        title
+                        state
+                        url
+                      }
+                      ... on PullRequest {
+                        number
+                        title
+                        state
+                        url
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        `;
+
+        const result = await graphqlWithAuth(userProjectQuery, {
+          login: owner,
+          number: args.project_number,
+          includeFields,
+          includeViews,
+          includeItems
+        });
+
+        project = result.user?.projectV2;
+        
+      } else if (ownerResult.organization && !ownerResult.user) {
+        // Query organization project
+        const orgProjectQuery = `
+          query($login: String!, $number: Int!, $includeFields: Boolean!, $includeViews: Boolean!, $includeItems: Boolean!) {
+            organization(login: $login) {
+              projectV2(number: $number) {
+                id
+                number
+                title
+                shortDescription
+                readme
+                url
+                public
+                closed
+                createdAt
+                updatedAt
+                owner {
+                  ... on User {
+                    login
+                    id
+                    __typename
+                  }
+                  ... on Organization {
+                    login
+                    id
+                    __typename
+                  }
+                }
+                fields(first: 20) @include(if: $includeFields) {
+                  totalCount
+                  nodes {
+                    ... on ProjectV2Field {
+                      id
+                      name
+                      dataType
+                      createdAt
+                      updatedAt
+                    }
+                    ... on ProjectV2SingleSelectField {
+                      id
+                      name
+                      dataType
+                      options {
+                        id
+                        name
+                        color
+                      }
+                    }
+                    ... on ProjectV2IterationField {
+                      id
+                      name
+                      dataType
+                      configuration {
+                        iterations {
+                          id
+                          title
+                          duration
+                          startDate
+                        }
+                      }
+                    }
+                  }
+                }
+                views(first: 10) @include(if: $includeViews) {
+                  totalCount
+                  nodes {
+                    id
+                    name
+                    layout
+                    createdAt
+                    updatedAt
+                  }
+                }
+                items(first: 20) @include(if: $includeItems) {
+                  totalCount
+                  nodes {
+                    id
+                    type
+                    createdAt
+                    content {
+                      ... on Issue {
+                        number
+                        title
+                        state
+                        url
+                      }
+                      ... on PullRequest {
+                        number
+                        title
+                        state
+                        url
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        `;
+
+        const result = await graphqlWithAuth(orgProjectQuery, {
+          login: owner,
+          number: args.project_number,
+          includeFields,
+          includeViews,
+          includeItems
+        });
+
+        project = result.organization?.projectV2;
+        
+      } else {
+        throw new Error(`Could not determine if "${owner}" is a user or organization`);
+      }
     }
 
     if (!project) {
@@ -349,13 +389,14 @@ export async function getProject(config: GitHubConfig, args: GetProjectArgs): Pr
 
     const status = project.closed ? '🔒 Closed' : '🟢 Open';
     const visibility = project.public ? '🌐 Public' : '🔒 Private';
+    const ownerType = project.owner.__typename || 'Unknown';
 
     let response = `📋 **Project Details: ${project.title}**\n\n`;
     response += `**Number:** #${project.number}\n`;
     response += `**ID:** ${project.id}\n`;
     response += `**Status:** ${status}\n`;
     response += `**Visibility:** ${visibility}\n`;
-    response += `**Owner:** ${project.owner.login}\n`;
+    response += `**Owner:** ${project.owner.login} (${ownerType})\n`;
     response += `**Created:** ${new Date(project.createdAt).toLocaleDateString()}\n`;
     response += `**Updated:** ${new Date(project.updatedAt).toLocaleDateString()}\n`;
     response += `**URL:** ${project.url}\n\n`;
@@ -440,7 +481,7 @@ export async function getProject(config: GitHubConfig, args: GetProjectArgs): Pr
 
     response += `🛠️ **Available Actions:**\n`;
     response += `• Use 'update_project' to modify project details\n`;
-    response += `• Use 'add_item_to_project' to add issues or pull requests\n`;
+    response += `• Use 'add_project_item' to add issues or pull requests\n`;
     response += `• Use 'delete_project' to remove this project\n`;
     response += `• Visit the project URL to manage fields, views, and items`;
 
@@ -451,8 +492,10 @@ export async function getProject(config: GitHubConfig, args: GetProjectArgs): Pr
       }]
     };
   } catch (error: any) {
+    console.error(`❌ Get project failed:`, error);
+    
     if (error.message?.includes('insufficient permission')) {
-      throw new Error('Insufficient permissions to access project details. Ensure your GitHub token has "project" scope and appropriate organization permissions.');
+      throw new Error('Insufficient permissions to access project details. Ensure your GitHub token has "project" scope and appropriate permissions.');
     }
     if (error.message?.includes('Could not resolve')) {
       throw new Error(`Project not found: ${args.project_number || args.project_id}. Check the project number/ID and your access permissions.`);

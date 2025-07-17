@@ -6,7 +6,6 @@ interface UpdateProjectArgs {
   title?: string;
   description?: string;
   readme?: string;
-  visibility?: 'PRIVATE' | 'PUBLIC';
   public?: boolean;
   closed?: boolean;
 }
@@ -27,11 +26,11 @@ export async function updateProject(config: GitHubConfig, args: UpdateProjectArg
   }
 
   // Check if at least one field to update is provided
-  const fieldsToUpdate = ['title', 'description', 'readme', 'visibility', 'public', 'closed'];
+  const fieldsToUpdate = ['title', 'description', 'readme', 'public', 'closed'];
   const hasUpdates = fieldsToUpdate.some(field => args[field as keyof UpdateProjectArgs] !== undefined);
   
   if (!hasUpdates) {
-    throw new Error('At least one field must be provided to update (title, description, readme, visibility, public, closed)');
+    throw new Error('At least one field must be provided to update (title, description, readme, public, closed)');
   }
 
   try {
@@ -88,7 +87,6 @@ export async function updateProject(config: GitHubConfig, args: UpdateProjectArg
             shortDescription
             readme
             url
-            visibility
             public
             closed
             createdAt

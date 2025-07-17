@@ -23,93 +23,139 @@ export async function listProjects(config: GitHubConfig, args: ListProjectsArgs)
     const orderBy = args.orderBy || 'UPDATED_AT';
     const direction = args.direction || 'DESC';
 
-    // Query projects for the owner (user or organization)
-    const projectsQuery = `
-      query($login: String!, $first: Int!, $orderBy: ProjectV2OrderField!, $direction: OrderDirection!) {
+    // First, determine if we're dealing with a user or organization
+    const ownerQuery = `
+      query($login: String!) {
         user(login: $login) {
-          projectsV2(first: $first, orderBy: {field: $orderBy, direction: $direction}) {
-            totalCount
-            nodes {
-              id
-              number
-              title
-              shortDescription
-              readme
-              url
-              visibility
-              public
-              closed
-              createdAt
-              updatedAt
-              owner {
-                ... on User {
-                  login
-                  id
-                }
-                ... on Organization {
-                  login
-                  id
-                }
-              }
-              items {
-                totalCount
-              }
-            }
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
-          }
+          id
+          login
+          __typename
         }
         organization(login: $login) {
-          projectsV2(first: $first, orderBy: {field: $orderBy, direction: $direction}) {
-            totalCount
-            nodes {
-              id
-              number
-              title
-              shortDescription
-              readme
-              url
-              visibility
-              public
-              closed
-              createdAt
-              updatedAt
-              owner {
-                ... on User {
-                  login
-                  id
-                }
-                ... on Organization {
-                  login
-                  id
-                }
-              }
-              items {
-                totalCount
-              }
-            }
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
-          }
+          id
+          login
+          __typename
         }
       }
     `;
 
-    const result = await graphqlWithAuth(projectsQuery, {
-      login: owner,
-      first,
-      orderBy,
-      direction
-    });
+    const ownerResult = await graphqlWithAuth(ownerQuery, { login: owner });
+    
+    let ownerType;
+    let projectsData;
+    
+    if (ownerResult.user && !ownerResult.organization) {
+      ownerType = 'User';
+      console.error(`✅ Listing projects for personal account: ${ownerResult.user.login}`);
+      
+      // Query projects for user account
+      const userProjectsQuery = `
+        query($login: String!, $first: Int!, $orderBy: ProjectV2OrderField!, $direction: OrderDirection!) {
+          user(login: $login) {
+            projectsV2(first: $first, orderBy: {field: $orderBy, direction: $direction}) {
+              totalCount
+              nodes {
+                id
+                number
+                title
+                shortDescription
+                readme
+                url
+                public
+                closed
+                createdAt
+                updatedAt
+                owner {
+                  ... on User {
+                    login
+                    id
+                  }
+                  ... on Organization {
+                    login
+                    id
+                  }
+                }
+                items {
+                  totalCount
+                }
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        }
+      `;
 
-    const projectsData = result.user?.projectsV2 || result.organization?.projectsV2;
+      const result = await graphqlWithAuth(userProjectsQuery, {
+        login: owner,
+        first,
+        orderBy,
+        direction
+      });
+
+      projectsData = result.user?.projectsV2;
+      
+    } else if (ownerResult.organization && !ownerResult.user) {
+      ownerType = 'Organization';
+      console.error(`✅ Listing projects for organization: ${ownerResult.organization.login}`);
+      
+      // Query projects for organization account
+      const orgProjectsQuery = `
+        query($login: String!, $first: Int!, $orderBy: ProjectV2OrderField!, $direction: OrderDirection!) {
+          organization(login: $login) {
+            projectsV2(first: $first, orderBy: {field: $orderBy, direction: $direction}) {
+              totalCount
+              nodes {
+                id
+                number
+                title
+                shortDescription
+                readme
+                url
+                public
+                closed
+                createdAt
+                updatedAt
+                owner {
+                  ... on User {
+                    login
+                    id
+                  }
+                  ... on Organization {
+                    login
+                    id
+                  }
+                }
+                items {
+                  totalCount
+                }
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        }
+      `;
+
+      const result = await graphqlWithAuth(orgProjectsQuery, {
+        login: owner,
+        first,
+        orderBy,
+        direction
+      });
+
+      projectsData = result.organization?.projectsV2;
+      
+    } else {
+      throw new Error(`Could not determine if "${owner}" is a user or organization. Please check the GITHUB_OWNER environment variable.`);
+    }
     
     if (!projectsData) {
-      throw new Error(`Unable to find user or organization: ${owner}`);
+      throw new Error(`Unable to access projects for ${ownerType.toLowerCase()}: ${owner}`);
     }
 
     let projects = projectsData.nodes || [];
@@ -121,16 +167,24 @@ export async function listProjects(config: GitHubConfig, args: ListProjectsArgs)
     }
 
     let response = `📋 **GitHub Projects v2** - Found ${projects.length} projects\n\n`;
-    response += `**Owner:** ${owner}\n`;
+    response += `**Owner:** ${owner} (${ownerType})\n`;
     response += `**Total Projects:** ${projectsData.totalCount}\n`;
     response += `**Filter:** ${args.status || 'all'} projects\n`;
     response += `**Order:** ${orderBy} ${direction}\n\n`;
 
     if (projects.length === 0) {
       response += "No projects found matching the criteria.\n\n";
-      response += `💡 **Create your first project:**\n`;
-      response += `• Use 'create_project' to create a new project\n`;
-      response += `• Visit GitHub.com to create projects through the web interface`;
+      
+      if (ownerType === 'User') {
+        response += `💡 **For personal accounts:**\n`;
+        response += `• Enable Projects in GitHub Settings → Features → Projects\n`;
+        response += `• Use 'create_project' to create your first project\n`;
+        response += `• Visit GitHub.com/users/${owner}/projects to view in browser`;
+      } else {
+        response += `💡 **Create your first project:**\n`;
+        response += `• Use 'create_project' to create a new project\n`;
+        response += `• Visit GitHub.com/orgs/${owner}/projects to view in browser`;
+      }
     } else {
       response += `## Projects List\n\n`;
       
@@ -158,7 +212,7 @@ export async function listProjects(config: GitHubConfig, args: ListProjectsArgs)
       response += `🛠️ **Available Actions:**\n`;
       response += `• Use 'get_project' with project number to see details\n`;
       response += `• Use 'update_project' to modify project settings\n`;
-      response += `• Use 'add_item_to_project' to add issues/PRs\n`;
+      response += `• Use 'add_project_item' to add issues/PRs\n`;
       response += `• Use 'delete_project' to remove projects`;
     }
 
@@ -169,8 +223,13 @@ export async function listProjects(config: GitHubConfig, args: ListProjectsArgs)
       }]
     };
   } catch (error: any) {
+    console.error(`❌ List projects failed:`, error);
+    
     if (error.message?.includes('insufficient permission')) {
-      throw new Error('Insufficient permissions to list projects. Ensure your GitHub token has "project" scope and appropriate organization permissions.');
+      throw new Error('Insufficient permissions to list projects. Ensure your GitHub token has "project" scope and appropriate permissions.');
+    }
+    if (error.message?.includes('Could not resolve')) {
+      throw new Error(`Unable to find GitHub account "${owner}". Please check the GITHUB_OWNER environment variable.`);
     }
     throw new Error(`Failed to list projects: ${error.message}`);
   }

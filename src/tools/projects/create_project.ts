@@ -3,7 +3,6 @@ import { GitHubConfig, ToolResponse } from '../../shared/types.js';
 interface CreateProjectArgs {
   title: string;
   description?: string;
-  visibility?: 'PRIVATE' | 'PUBLIC';
   template?: string;
 }
 
@@ -19,25 +18,42 @@ export async function createProject(config: GitHubConfig, args: CreateProjectArg
   }
 
   try {
-    // First, get the owner ID (user or organization)
+    // First, determine if we're dealing with a user or organization
     const ownerQuery = `
       query($login: String!) {
         user(login: $login) {
           id
           login
+          __typename
         }
         organization(login: $login) {
           id
           login
+          __typename
         }
       }
     `;
 
     const ownerResult = await graphqlWithAuth(ownerQuery, { login: owner });
-    const ownerId = ownerResult.user?.id || ownerResult.organization?.id;
     
-    if (!ownerId) {
-      throw new Error(`Unable to find user or organization: ${owner}`);
+    let ownerId;
+    let ownerType;
+    
+    if (ownerResult.user && !ownerResult.organization) {
+      ownerId = ownerResult.user.id;
+      ownerType = 'User';
+      console.error(`✅ Detected personal account: ${ownerResult.user.login}`);
+    } else if (ownerResult.organization && !ownerResult.user) {
+      ownerId = ownerResult.organization.id;
+      ownerType = 'Organization';
+      console.error(`✅ Detected organization: ${ownerResult.organization.login}`);
+    } else if (ownerResult.user && ownerResult.organization) {
+      // Handle case where both exist (shouldn't happen normally)
+      ownerId = ownerResult.user.id;
+      ownerType = 'User';
+      console.error(`⚠️ Both user and organization found, using user: ${ownerResult.user.login}`);
+    } else {
+      throw new Error(`Could not find user or organization with login: ${owner}. Please check the GITHUB_OWNER environment variable.`);
     }
 
     // Create the project using GraphQL mutation
@@ -51,7 +67,6 @@ export async function createProject(config: GitHubConfig, args: CreateProjectArg
             shortDescription
             readme
             url
-            visibility
             public
             closed
             createdAt
@@ -60,10 +75,12 @@ export async function createProject(config: GitHubConfig, args: CreateProjectArg
               ... on User {
                 login
                 id
+                __typename
               }
               ... on Organization {
                 login
                 id
+                __typename
               }
             }
           }
@@ -74,9 +91,10 @@ export async function createProject(config: GitHubConfig, args: CreateProjectArg
     const input = {
       ownerId,
       title: args.title,
-      ...(args.description && { shortDescription: args.description }),
-      ...(args.visibility && { visibility: args.visibility })
+      ...(args.description && { shortDescription: args.description })
     };
+
+    console.error(`🚀 Creating project for ${ownerType}: ${owner} with input:`, JSON.stringify(input, null, 2));
 
     const result = await graphqlWithAuth(createProjectMutation, { input });
     const project = result.createProjectV2.projectV2;
@@ -85,16 +103,16 @@ export async function createProject(config: GitHubConfig, args: CreateProjectArg
     response += `**Title:** ${project.title}\n`;
     response += `**Number:** #${project.number}\n`;
     response += `**ID:** ${project.id}\n`;
-    response += `**Description:** ${project.shortDescription || 'None'}\n`;
-    response += `**Visibility:** ${project.visibility}\n`;
-    response += `**Public:** ${project.public ? 'Yes' : 'No'}\n`;
+    response += `**Owner Type:** ${ownerType}\n`;
     response += `**Owner:** ${project.owner.login}\n`;
+    response += `**Description:** ${project.shortDescription || 'None'}\n`;
+    response += `**Visibility:** ${project.public ? 'Public' : 'Private'}\n`;
     response += `**Status:** ${project.closed ? 'Closed' : 'Open'}\n`;
     response += `**Created:** ${new Date(project.createdAt).toLocaleDateString()}\n`;
     response += `**URL:** ${project.url}\n\n`;
     
     response += `💡 **Next Steps:**\n`;
-    response += `• Use 'add_item_to_project' to add issues or pull requests\n`;
+    response += `• Use 'add_project_item' to add issues or pull requests\n`;
     response += `• Use 'get_project' to view detailed project information\n`;
     response += `• Use 'list_projects' to see all your projects\n`;
     response += `• Visit the project URL to configure fields and views`;
@@ -106,11 +124,16 @@ export async function createProject(config: GitHubConfig, args: CreateProjectArg
       }]
     };
   } catch (error: any) {
-    if (error.message?.includes('insufficient permission')) {
-      throw new Error('Insufficient permissions to create projects. Ensure your GitHub token has "project" scope and appropriate organization permissions.');
+    console.error(`❌ Create project failed:`, error);
+    
+    if (error.message?.includes('insufficient permission') || error.message?.includes('admin access')) {
+      throw new Error('Insufficient permissions to create projects. Personal GitHub accounts may need to enable Projects in Settings → Features → Projects.');
     }
     if (error.message?.includes('already exists')) {
       throw new Error(`Project with title "${args.title}" already exists. Choose a different title.`);
+    }
+    if (error.message?.includes('Could not resolve to an Organization')) {
+      throw new Error(`GitHub account "${owner}" is a personal account, not an organization. Personal accounts can create projects, but you may need to enable Projects in your GitHub Settings → Features.`);
     }
     throw new Error(`Failed to create project: ${error.message}`);
   }
